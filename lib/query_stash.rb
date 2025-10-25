@@ -4,5 +4,8 @@ require_relative "query_stash/version"
 
 module QueryStash
   class Error < StandardError; end
-  # Your code goes here...
+
+  class << self
+    attr_accessor :raise_errors
+  end
 end

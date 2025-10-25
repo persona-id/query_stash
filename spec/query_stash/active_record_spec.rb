@@ -1,0 +1,218 @@
+# frozen_string_literal: true
+
+require "query_stash/active_record"
+
+RSpec.describe QueryStash::ActiveRecord do
+  def cache_key_for(sql)
+    "v1:#{ActiveRecord::Base.current_shard}:#{Digest::SHA256.hexdigest(sql)}"
+  end
+
+  describe QueryStash::ActiveRecord::Registry do
+    let(:registry) { described_class.new }
+
+    describe "#add_rule" do
+      it "adds rules with regex, name, callbacks, and blocks" do
+        registry.add_rule(/SELECT/, name: "test_rule", ttl_seconds: 60)
+        expect(registry.rules.length).to eq(1)
+        expect(registry.rules.first.regex).to eq(/SELECT/)
+        expect(registry.rules.first.name).to eq("test_rule")
+
+        callback = proc { |rule, result| }
+        registry.add_rule(/UPDATE/, name: "callback_rule", on_cache_hit: callback, ttl_seconds: 60)
+        expect(registry.rules[1].on_cache_hit).to eq(callback)
+
+        ttl_proc = proc { 60 }
+        registry.add_rule(/INSERT/, name: "proc_rule", ttl_seconds: ttl_proc)
+        expect(registry.rules.last.ttl_seconds).to eq(ttl_proc)
+
+        expect(registry.rules.length).to eq(3)
+      end
+    end
+
+    describe "#delete_rule" do
+      it "deletes rules by name and ignores unknown names" do
+        registry.add_rule(/SELECT/, name: "test_rule", ttl_seconds: 60)
+        registry.add_rule(/INSERT/, name: "other_rule", ttl_seconds: 120)
+
+        registry.delete_rule("test_rule")
+        expect(registry.rules.length).to eq(1)
+        expect(registry.rules.map(&:name)).not_to include("test_rule")
+
+        expect do
+          registry.delete_rule("nonexistent")
+        end.not_to(change { registry.rules.length })
+      end
+    end
+
+    describe "#match_rule" do
+      before do
+        registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 60)
+        registry.add_rule(/SELECT.*orders/, name: "order_queries", ttl_seconds: 120)
+      end
+
+      it "returns the first matching rule, or nil" do
+        expect(registry.match_rule("SELECT * FROM users WHERE id = 1").name).to eq("user_queries")
+        expect(registry.match_rule("SELECT * FROM products")).to be_nil
+
+        registry.add_rule(/SELECT/, name: "generic_select", ttl_seconds: 30)
+        expect(registry.match_rule("SELECT * FROM users").name).to eq("user_queries")
+      end
+    end
+  end
+
+  describe QueryStash::ActiveRecord::AdapterPatch do
+    let(:adapter) do
+      Class.new do
+        def exec_query(_sql, _name = "SQL", _binds = [], prepare: false, **_kwargs)
+          "original_result"
+        end
+      end.prepend(described_class).new
+    end
+
+    before do
+      QueryStash::ActiveRecord.registry.instance_variable_set(:@rules, [])
+      QueryStash::ActiveRecord.cache.clear
+      QueryStash::ActiveRecord.registry.add_rule(/SELECT/, name: "test", ttl_seconds: 60)
+    end
+
+    context "when the stash is not enabled" do
+      it "calls super without using the cache" do
+        expect(adapter.exec_query("SELECT * FROM users")).to eq("original_result")
+        adapter.exec_query("SELECT * FROM users")
+
+        expect(QueryStash::ActiveRecord.cache.instance_variable_get(:@data)).to be_empty
+      end
+    end
+
+    context "when the stash is enabled" do
+      it "uses the cache for matching queries" do
+        Thread.current[:query_stash_active_record_enabled] = true
+        adapter.exec_query("SELECT * FROM users")
+
+        expect(QueryStash::ActiveRecord.cache.instance_variable_get(:@data).length).to eq(1)
+      ensure
+        Thread.current[:query_stash_active_record_enabled] = false
+      end
+    end
+  end
+
+  describe ".cache" do
+    it "returns a memoized ActiveSupport::Cache::MemoryStore instance" do
+      expect(described_class.cache).to be_a(ActiveSupport::Cache::MemoryStore)
+      expect(described_class.cache).to be(described_class.cache)
+    end
+  end
+
+  describe ".registry" do
+    it "returns a memoized Registry instance" do
+      expect(described_class.registry).to be_a(described_class::Registry)
+      expect(described_class.registry).to be(described_class.registry)
+    end
+  end
+
+  describe ".wrap" do
+    subject { described_class.wrap(sql, binds) { "yielded_result" } }
+
+    let(:registry) { described_class.registry }
+    let(:cache) { described_class.cache }
+    let(:sql) { "SELECT * FROM users WHERE id = 1" }
+    let(:binds) { [] }
+
+    before do
+      cache.clear
+      registry.instance_variable_set(:@rules, [])
+    end
+
+    context "when binds are present" do
+      let(:binds) { ["bind"] }
+
+      before { registry.add_rule(/SELECT/, name: "test", ttl_seconds: 60) }
+
+      it "yields without caching" do
+        expect(subject).to eq("yielded_result")
+        expect(cache.read(cache_key_for(sql))).to be_nil
+      end
+    end
+
+    context "when sql is not a SELECT statement" do
+      let(:sql) { "INSERT INTO users VALUES (1)" }
+
+      before { registry.add_rule(/INSERT/, name: "test", ttl_seconds: 60) }
+
+      it "yields without caching" do
+        expect(subject).to eq("yielded_result")
+        expect(cache.instance_variable_get(:@data)).to be_empty
+      end
+    end
+
+    context "when no rule matches" do
+      it "yields without caching" do
+        expect(subject).to eq("yielded_result")
+        expect(cache.instance_variable_get(:@data)).to be_empty
+      end
+    end
+
+    context "when a rule matches" do
+      context "when cache is empty" do
+        it "yields and caches the result without calling on_cache_hit" do
+          called = false
+          registry.add_rule(
+            /SELECT.*users/,
+            name: "user_queries",
+            on_cache_hit: proc { |_rule, _result| called = true },
+            ttl_seconds: proc { |_result| 60 }
+          )
+
+          expect(described_class.wrap(sql, []) { "yielded_result" }).to eq("yielded_result")
+          expect(cache.read(cache_key_for(sql))).to eq("yielded_result")
+          expect(called).to be(false)
+        end
+      end
+
+      context "when cache has the result" do
+        before { cache.write(cache_key_for(sql), "cached_result") }
+
+        it "returns the cached result without yielding and calls on_cache_hit" do
+          called_with_result = nil
+          registry.add_rule(
+            /SELECT.*users/,
+            name: "user_queries",
+            on_cache_hit: proc { |_rule, result| called_with_result = result },
+            ttl_seconds: 60
+          )
+
+          yielded = false
+          result = described_class.wrap(sql, []) do
+            yielded = true
+            "yielded_result"
+          end
+
+          expect(result).to eq("cached_result")
+          expect(yielded).to be(false)
+          expect(called_with_result).to eq("cached_result")
+        end
+      end
+
+      context "when TTL is zero or negative" do
+        before { registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 0) }
+
+        it "does not cache the result" do
+          described_class.wrap(sql, []) { "yielded_result" }
+
+          expect(cache.read(cache_key_for(sql))).to be_nil
+        end
+      end
+
+      context "when TTL is positive" do
+        before { registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 120) }
+
+        it "caches the result" do
+          described_class.wrap(sql, []) { "yielded_result" }
+
+          expect(cache.read(cache_key_for(sql))).to eq("yielded_result")
+          expect(cache.instance_variable_get(:@data)).to have_key(cache_key_for(sql))
+        end
+      end
+    end
+  end
+end
