@@ -129,7 +129,7 @@ module QueryStash
 
         if ttl_seconds.positive?
           rule.on_cache_miss&.call(rule, result)
-          cache.write(cache_key, result, ttl: ttl_seconds)
+          cache.write(cache_key, result, expires_in: ttl_seconds)
         else
           rule.on_cache_skip&.call(rule, result)
         end

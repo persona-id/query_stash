@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "active_support/testing/time_helpers"
 require "query_stash/active_record"
 
 RSpec.describe QueryStash::ActiveRecord do
@@ -204,13 +205,20 @@ RSpec.describe QueryStash::ActiveRecord do
       end
 
       context "when TTL is positive" do
+        include ActiveSupport::Testing::TimeHelpers
+
         before { registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 120) }
 
-        it "caches the result" do
-          described_class.wrap(sql, []) { "yielded_result" }
+        it "caches the result with the TTL" do
+          freeze_time do
+            described_class.wrap(sql, []) { "yielded_result" }
 
-          expect(cache.read(cache_key_for(sql))).to eq("yielded_result")
-          expect(cache.instance_variable_get(:@data)).to have_key(cache_key_for(sql))
+            expect(cache.read(cache_key_for(sql))).to eq("yielded_result")
+
+            entries = cache.instance_variable_get(:@data)
+            expect(entries).to have_key(cache_key_for(sql))
+            expect(entries[cache_key_for(sql)].expires_at).to eq(Time.now.to_f + 120)
+          end
         end
       end
     end
