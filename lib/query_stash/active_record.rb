@@ -68,6 +68,14 @@ module QueryStash
       ensure
         Thread.current[:query_stash_active_record_enabled] = old
       end
+
+      def without_query_stash(&block)
+        old = Thread.current[:query_stash_active_record_enabled]
+        Thread.current[:query_stash_active_record_enabled] = false
+        block.call
+      ensure
+        Thread.current[:query_stash_active_record_enabled] = old
+      end
     end
 
     module AdapterPatch

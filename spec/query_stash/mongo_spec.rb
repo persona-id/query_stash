@@ -171,6 +171,38 @@ RSpec.describe QueryStash::Mongo do
     end
   end
 
+  describe QueryStash::Mongo::BasePatch do
+    describe "#with_query_stash" do
+      it "enables the stash" do
+        expect(Thread.current[:query_stash_mongo_enabled]).to be_nil
+
+        Mongo.with_query_stash do
+          expect(Thread.current[:query_stash_mongo_enabled]).to be(true)
+        end
+
+        expect(Thread.current[:query_stash_mongo_enabled]).to be_nil
+      end
+    end
+
+    describe "#without_query_stash" do
+      around do |example|
+        Mongo.with_query_stash do
+          example.run
+        end
+      end
+
+      it "disables the stash" do
+        expect(Thread.current[:query_stash_mongo_enabled]).to be(true)
+
+        Mongo.without_query_stash do
+          expect(Thread.current[:query_stash_mongo_enabled]).to be(false)
+        end
+
+        expect(Thread.current[:query_stash_mongo_enabled]).to be(true)
+      end
+    end
+  end
+
   describe ".cache" do
     it "returns a memoized ActiveSupport::Cache::MemoryStore instance" do
       expect(described_class.cache).to be_a(ActiveSupport::Cache::MemoryStore)
