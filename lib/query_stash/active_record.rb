@@ -17,6 +17,7 @@ module QueryStash
         :on_cache_hit,
         :on_cache_miss,
         :on_cache_skip,
+        :enabled,
         keyword_init: true
       )
 
@@ -32,7 +33,8 @@ module QueryStash
         ttl_seconds:,
         on_cache_hit: nil,
         on_cache_miss: nil,
-        on_cache_skip: nil
+        on_cache_skip: nil,
+        enabled: nil
       )
         raise "Rule name is required" if name.blank?
 
@@ -46,7 +48,8 @@ module QueryStash
           ttl_seconds: ttl_seconds,
           on_cache_hit: on_cache_hit,
           on_cache_miss: on_cache_miss,
-          on_cache_skip: on_cache_skip
+          on_cache_skip: on_cache_skip,
+          enabled: enabled
         )
       end
 
@@ -116,6 +119,8 @@ module QueryStash
 
       rule = registry.match_rule(sql)
       return yield unless rule
+
+      return yield unless rule.enabled.nil? || rule.enabled.call
 
       cache_key = cache_key_for(sql)
 

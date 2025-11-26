@@ -13,10 +13,12 @@ RSpec.describe QueryStash::ActiveRecord do
 
     describe "#add_rule" do
       it "adds rules with regex, name, callbacks, and blocks" do
-        registry.add_rule(/SELECT/, name: "test_rule", ttl_seconds: 60)
+        enabled = -> { true }
+        registry.add_rule(/SELECT/, name: "test_rule", ttl_seconds: 60, enabled: enabled)
         expect(registry.rules.length).to eq(1)
         expect(registry.rules.first.regex).to eq(/SELECT/)
         expect(registry.rules.first.name).to eq("test_rule")
+        expect(registry.rules.first.enabled).to eq(enabled)
 
         callback = proc { |rule, result| }
         registry.add_rule(/UPDATE/, name: "callback_rule", on_cache_hit: callback, ttl_seconds: 60)
@@ -186,6 +188,27 @@ RSpec.describe QueryStash::ActiveRecord do
     end
 
     context "when a rule matches" do
+      context "when the rule has an enabled callable" do
+        let(:flag) { { on: false } }
+
+        before do
+          state = flag
+          registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 60, enabled: -> { state[:on] })
+        end
+
+        it "yields without caching while it returns false" do
+          expect(subject).to eq("yielded_result")
+          expect(cache.read(cache_key_for(sql))).to be_nil
+        end
+
+        it "uses the cache normally while it returns true" do
+          flag[:on] = true
+
+          expect(subject).to eq("yielded_result")
+          expect(cache.read(cache_key_for(sql))).to eq("yielded_result")
+        end
+      end
+
       context "when cache is empty" do
         it "yields and caches the result without calling on_cache_hit" do
           called = false
