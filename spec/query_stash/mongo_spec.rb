@@ -173,6 +173,11 @@ RSpec.describe QueryStash::Mongo do
 
   describe QueryStash::Mongo::BasePatch do
     describe "#with_query_stash" do
+      before do
+        # Ensure clean state before test to avoid pollution from other tests
+        Thread.current[:query_stash_mongo_enabled] = nil
+      end
+
       it "enables the stash" do
         expect(Thread.current[:query_stash_mongo_enabled]).to be_nil
 
