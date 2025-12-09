@@ -93,14 +93,27 @@ module QueryStash
       end
     end
 
-    CACHE_STORE_SIZE = 128 * 1024 * 1024
-    private_constant :CACHE_STORE_SIZE
-
     CACHEABLE_SQL_REGEX = /\ASELECT/i
     private_constant :CACHEABLE_SQL_REGEX
 
+    attr_writer :cache
+
     def cache
-      @cache ||= ActiveSupport::Cache::MemoryStore.new(size: CACHE_STORE_SIZE)
+      @cache ||= ActiveSupport::Cache::MemoryStore.new(size: 128.megabytes)
+    end
+
+    def cache_usage_bytes
+      if cache.respond_to?(:redis)
+        # Only update cache stats once every minute to avoid excessive Redis calls
+        if @_cache_stats_last_updated_at.blank? || @_cache_stats_last_updated_at < 1.minute.ago
+          @_cache_stats_last_updated_at = Time.current
+          @_cache_stats = cache.stats
+        end
+        @_cache_stats["used_memory"]
+      else
+        # WARNING: relies on internal ActiveSupport::Cache::MemoryStore API
+        cache.instance_variable_get(:@cache_size)
+      end
     end
 
     def registry

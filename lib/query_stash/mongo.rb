@@ -6,6 +6,7 @@ require "active_support"
 require "active_support/cache"
 require "active_support/core_ext/object/blank"
 require "active_support/core_ext/object/json"
+require "active_support/core_ext/numeric/time"
 require "query_stash"
 
 module QueryStash
@@ -175,14 +176,27 @@ module QueryStash
     end
 
     # ---------------- Constants ----------------
-    CACHE_STORE_SIZE = 128 * 1024 * 1024
-    private_constant :CACHE_STORE_SIZE
-
     # Wildcard sentinel for selector patterns
     ANY = Object.new.freeze
 
+    attr_writer :cache
+
     def cache
-      @cache ||= ActiveSupport::Cache::MemoryStore.new(size: CACHE_STORE_SIZE)
+      @cache ||= ActiveSupport::Cache::MemoryStore.new(size: 128.megabytes)
+    end
+
+    def cache_usage_bytes
+      if cache.respond_to?(:redis)
+        # Only update cache stats once every minute to avoid excessive Redis calls
+        if @_cache_stats_last_updated_at.blank? || @_cache_stats_last_updated_at < 1.minute.ago
+          @_cache_stats_last_updated_at = Time.current
+          @_cache_stats = cache.stats
+        end
+        @_cache_stats["used_memory"]
+      else
+        # WARNING: relies on internal ActiveSupport::Cache::MemoryStore API
+        cache.instance_variable_get(:@cache_size)
+      end
     end
 
     def registry

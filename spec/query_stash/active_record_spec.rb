@@ -143,6 +143,41 @@ RSpec.describe QueryStash::ActiveRecord do
     end
   end
 
+  describe ".cache=" do
+    after { described_class.cache = nil }
+
+    it "replaces the backing store" do
+      store = ActiveSupport::Cache::MemoryStore.new
+      described_class.cache = store
+
+      expect(described_class.cache).to be(store)
+    end
+  end
+
+  describe ".cache_usage_bytes" do
+    after { described_class.cache = nil }
+
+    it "reports the MemoryStore size" do
+      described_class.cache = ActiveSupport::Cache::MemoryStore.new
+      described_class.cache.write("key", "value")
+
+      expect(described_class.cache_usage_bytes).to be_positive
+    end
+
+    it "reports used_memory for Redis-backed stores, refreshed at most once a minute" do
+      store = ActiveSupport::Cache::MemoryStore.new
+      stats = { "used_memory" => 1024 }
+      store.define_singleton_method(:redis) { :redis }
+      store.define_singleton_method(:stats) { stats.dup }
+      described_class.cache = store
+      described_class.instance_variable_set(:@_cache_stats_last_updated_at, nil)
+
+      expect(described_class.cache_usage_bytes).to eq(1024)
+      stats["used_memory"] = 2048
+      expect(described_class.cache_usage_bytes).to eq(1024)
+    end
+  end
+
   describe ".registry" do
     it "returns a memoized Registry instance" do
       expect(described_class.registry).to be_a(described_class::Registry)
