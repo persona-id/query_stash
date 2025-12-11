@@ -233,27 +233,26 @@ module QueryStash
 
       result = yield
 
-      begin
-        ttl_seconds =
-          if rule.ttl_seconds.respond_to?(:call)
-            rule.ttl_seconds.call(result).to_i
-          else
-            rule.ttl_seconds.to_i
-          end
-
-        if ttl_seconds.positive?
-          rule.on_cache_miss&.call(rule, result)
-          cache.write(cache_key, result, expires_in: ttl_seconds)
+      ttl_seconds =
+        if rule.ttl_seconds.respond_to?(:call)
+          rule.ttl_seconds.call(result).to_i
         else
-          rule.on_cache_skip&.call(rule, result)
+          rule.ttl_seconds.to_i
         end
-      rescue StandardError => e
-        raise e if QueryStash.raise_errors
 
-        ::Mongo::Logger.logger.error("Encountered error in QueryStash::Mongo for rule #{rule.name}: #{e.message}")
+      if ttl_seconds.positive?
+        rule.on_cache_miss&.call(rule, result)
+        cache.write(cache_key, result, expires_in: ttl_seconds)
+      else
+        rule.on_cache_skip&.call(rule, result)
       end
 
       result
+    rescue StandardError => e
+      raise e if QueryStash.raise_errors
+
+      ActiveSupport.error_reporter.report(e, handled: true)
+      yield
     end
 
     private
