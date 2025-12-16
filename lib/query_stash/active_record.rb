@@ -109,7 +109,8 @@ module QueryStash
           @_cache_stats_last_updated_at = Time.current
           @_cache_stats = cache.stats
         end
-        @_cache_stats["used_memory"]&.to_i
+
+        @_cache_stats&.fetch("used_memory", nil)&.to_i
       else
         # WARNING: relies on internal ActiveSupport::Cache::MemoryStore API
         cache.instance_variable_get(:@cache_size)
