@@ -138,34 +138,33 @@ module QueryStash
 
       cache_key = cache_key_for(sql)
 
-      cached_result = cache.read(cache_key)
-      if cached_result
-        rule.on_cache_hit&.call(rule, cached_result)
-        return cached_result
+      rescue_cache_error do
+        cached_result = cache.read(cache_key)
+        if cached_result
+          rule.on_cache_hit&.call(rule, cached_result)
+          return cached_result
+        end
       end
 
       result = yield
 
-      ttl_seconds =
-        if rule.ttl_seconds.respond_to?(:call)
-          rule.ttl_seconds.call(result).to_i
-        else
-          rule.ttl_seconds.to_i
-        end
+      rescue_cache_error do
+        ttl_seconds =
+          if rule.ttl_seconds.respond_to?(:call)
+            rule.ttl_seconds.call(result).to_i
+          else
+            rule.ttl_seconds.to_i
+          end
 
-      if ttl_seconds.positive?
-        rule.on_cache_miss&.call(rule, result)
-        cache.write(cache_key, result, expires_in: ttl_seconds)
-      else
-        rule.on_cache_skip&.call(rule, result)
+        if ttl_seconds.positive?
+          rule.on_cache_miss&.call(rule, result)
+          cache.write(cache_key, result, expires_in: ttl_seconds)
+        else
+          rule.on_cache_skip&.call(rule, result)
+        end
       end
 
       result
-    rescue StandardError => e
-      raise e if QueryStash.raise_errors
-
-      ActiveSupport.error_reporter.report(e, handled: true)
-      yield
     end
 
     private
@@ -176,6 +175,14 @@ module QueryStash
       # Also note that Marginalia comments are applied AFTER this since
       # this module is prepended.
       "v1:#{::ActiveRecord::Base.current_shard}:#{Digest::SHA256.hexdigest(sql)}"
+    end
+
+    def rescue_cache_error(&block)
+      block.call
+    rescue StandardError => e
+      raise e if QueryStash.raise_errors
+
+      ActiveSupport.error_reporter.report(e, handled: true)
     end
   end
 end
