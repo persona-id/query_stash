@@ -19,6 +19,7 @@ module QueryStash
         :selector,
         :name,
         :ttl_seconds,
+        :ttl_jitter_seconds,
         :on_cache_hit,
         :on_cache_miss,
         :on_cache_skip,
@@ -35,6 +36,7 @@ module QueryStash
         selector, # required
         name:,
         ttl_seconds:,
+        ttl_jitter_seconds:,
         on_cache_hit: nil,
         on_cache_miss: nil,
         on_cache_skip: nil
@@ -57,6 +59,7 @@ module QueryStash
           selector: selector,
           name: name,
           ttl_seconds: ttl_seconds,
+          ttl_jitter_seconds: ttl_jitter_seconds,
           on_cache_hit: on_cache_hit,
           on_cache_miss: on_cache_miss,
           on_cache_skip: on_cache_skip
@@ -218,7 +221,7 @@ module QueryStash
         skip: view.options[:skip],
         sort: view.options[:sort],
         projection: view.options[:projection],
-        pipeline: view.respond_to?(:pipline) ? view.pipeline : nil
+        pipeline: view.respond_to?(:pipeline) ? view.pipeline : nil
       }
 
       rule = registry.match_rule(selector)
@@ -244,9 +247,16 @@ module QueryStash
             rule.ttl_seconds.to_i
           end
 
+        ttl_jitter_seconds =
+          if rule.ttl_jitter_seconds.respond_to?(:call)
+            rule.ttl_jitter_seconds.call(result).to_i
+          else
+            rule.ttl_jitter_seconds.to_i
+          end
+
         if ttl_seconds.positive?
           rule.on_cache_miss&.call(rule, result)
-          cache.write(cache_key, result, expires_in: ttl_seconds)
+          cache.write(cache_key, result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
         else
           rule.on_cache_skip&.call(rule, result)
         end
