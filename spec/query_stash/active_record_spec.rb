@@ -14,18 +14,18 @@ RSpec.describe QueryStash::ActiveRecord do
     describe "#add_rule" do
       it "adds rules with regex, name, callbacks, and blocks" do
         enabled = -> { true }
-        registry.add_rule(/SELECT/, name: "test_rule", ttl_seconds: 60, enabled: enabled)
+        registry.add_rule(/SELECT/, name: "test_rule", ttl_seconds: 60, ttl_jitter_seconds: 0, enabled: enabled)
         expect(registry.rules.length).to eq(1)
         expect(registry.rules.first.regex).to eq(/SELECT/)
         expect(registry.rules.first.name).to eq("test_rule")
         expect(registry.rules.first.enabled).to eq(enabled)
 
         callback = proc { |rule, result| }
-        registry.add_rule(/UPDATE/, name: "callback_rule", on_cache_hit: callback, ttl_seconds: 60)
+        registry.add_rule(/UPDATE/, name: "callback_rule", on_cache_hit: callback, ttl_seconds: 60, ttl_jitter_seconds: 0)
         expect(registry.rules[1].on_cache_hit).to eq(callback)
 
         ttl_proc = proc { 60 }
-        registry.add_rule(/INSERT/, name: "proc_rule", ttl_seconds: ttl_proc)
+        registry.add_rule(/INSERT/, name: "proc_rule", ttl_seconds: ttl_proc, ttl_jitter_seconds: 0)
         expect(registry.rules.last.ttl_seconds).to eq(ttl_proc)
 
         expect(registry.rules.length).to eq(3)
@@ -34,8 +34,8 @@ RSpec.describe QueryStash::ActiveRecord do
 
     describe "#delete_rule" do
       it "deletes rules by name and ignores unknown names" do
-        registry.add_rule(/SELECT/, name: "test_rule", ttl_seconds: 60)
-        registry.add_rule(/INSERT/, name: "other_rule", ttl_seconds: 120)
+        registry.add_rule(/SELECT/, name: "test_rule", ttl_seconds: 60, ttl_jitter_seconds: 0)
+        registry.add_rule(/INSERT/, name: "other_rule", ttl_seconds: 120, ttl_jitter_seconds: 0)
 
         registry.delete_rule("test_rule")
         expect(registry.rules.length).to eq(1)
@@ -49,15 +49,15 @@ RSpec.describe QueryStash::ActiveRecord do
 
     describe "#match_rule" do
       before do
-        registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 60)
-        registry.add_rule(/SELECT.*orders/, name: "order_queries", ttl_seconds: 120)
+        registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 60, ttl_jitter_seconds: 0)
+        registry.add_rule(/SELECT.*orders/, name: "order_queries", ttl_seconds: 120, ttl_jitter_seconds: 0)
       end
 
       it "returns the first matching rule, or nil" do
         expect(registry.match_rule("SELECT * FROM users WHERE id = 1").name).to eq("user_queries")
         expect(registry.match_rule("SELECT * FROM products")).to be_nil
 
-        registry.add_rule(/SELECT/, name: "generic_select", ttl_seconds: 30)
+        registry.add_rule(/SELECT/, name: "generic_select", ttl_seconds: 30, ttl_jitter_seconds: 0)
         expect(registry.match_rule("SELECT * FROM users").name).to eq("user_queries")
       end
     end
@@ -75,7 +75,7 @@ RSpec.describe QueryStash::ActiveRecord do
     before do
       QueryStash::ActiveRecord.registry.instance_variable_set(:@rules, [])
       QueryStash::ActiveRecord.cache.clear
-      QueryStash::ActiveRecord.registry.add_rule(/SELECT/, name: "test", ttl_seconds: 60)
+      QueryStash::ActiveRecord.registry.add_rule(/SELECT/, name: "test", ttl_seconds: 60, ttl_jitter_seconds: 0)
     end
 
     context "when the stash is not enabled" do
@@ -201,7 +201,7 @@ RSpec.describe QueryStash::ActiveRecord do
     context "when binds are present" do
       let(:binds) { ["bind"] }
 
-      before { registry.add_rule(/SELECT/, name: "test", ttl_seconds: 60) }
+      before { registry.add_rule(/SELECT/, name: "test", ttl_seconds: 60, ttl_jitter_seconds: 0) }
 
       it "yields without caching" do
         expect(subject).to eq("yielded_result")
@@ -212,7 +212,7 @@ RSpec.describe QueryStash::ActiveRecord do
     context "when sql is not a SELECT statement" do
       let(:sql) { "INSERT INTO users VALUES (1)" }
 
-      before { registry.add_rule(/INSERT/, name: "test", ttl_seconds: 60) }
+      before { registry.add_rule(/INSERT/, name: "test", ttl_seconds: 60, ttl_jitter_seconds: 0) }
 
       it "yields without caching" do
         expect(subject).to eq("yielded_result")
@@ -233,7 +233,7 @@ RSpec.describe QueryStash::ActiveRecord do
 
         before do
           state = flag
-          registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 60, enabled: -> { state[:on] })
+          registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 60, ttl_jitter_seconds: 0, enabled: -> { state[:on] })
         end
 
         it "yields without caching while it returns false" do
@@ -256,7 +256,8 @@ RSpec.describe QueryStash::ActiveRecord do
             /SELECT.*users/,
             name: "user_queries",
             on_cache_hit: proc { |_rule, _result| called = true },
-            ttl_seconds: proc { |_result| 60 }
+            ttl_seconds: proc { |_result| 60 },
+            ttl_jitter_seconds: proc { |_result| 10 }
           )
 
           expect(described_class.wrap(sql, []) { "yielded_result" }).to eq("yielded_result")
@@ -274,7 +275,8 @@ RSpec.describe QueryStash::ActiveRecord do
             /SELECT.*users/,
             name: "user_queries",
             on_cache_hit: proc { |_rule, result| called_with_result = result },
-            ttl_seconds: 60
+            ttl_seconds: 60,
+            ttl_jitter_seconds: 10
           )
 
           yielded = false
@@ -290,7 +292,7 @@ RSpec.describe QueryStash::ActiveRecord do
       end
 
       context "when TTL is zero or negative" do
-        before { registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 0) }
+        before { registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 0, ttl_jitter_seconds: 0) }
 
         it "does not cache the result" do
           described_class.wrap(sql, []) { "yielded_result" }
@@ -302,7 +304,7 @@ RSpec.describe QueryStash::ActiveRecord do
       context "when TTL is positive" do
         include ActiveSupport::Testing::TimeHelpers
 
-        before { registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 120) }
+        before { registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 120, ttl_jitter_seconds: 0) }
 
         it "caches the result with the TTL" do
           freeze_time do
@@ -312,7 +314,25 @@ RSpec.describe QueryStash::ActiveRecord do
 
             entries = cache.instance_variable_get(:@data)
             expect(entries).to have_key(cache_key_for(sql))
-            expect(entries[cache_key_for(sql)].expires_at).to eq(Time.now.to_f + 120)
+            expect(entries[cache_key_for(sql)].expires_at).to be_between(Time.now.to_f + 120, Time.now.to_f + 121)
+          end
+        end
+      end
+
+      context "when TTL jitter is positive" do
+        include ActiveSupport::Testing::TimeHelpers
+
+        before do
+          registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 120, ttl_jitter_seconds: 30)
+        end
+
+        it "caches the result with a TTL spread over the jitter window" do
+          freeze_time do
+            described_class.wrap(sql, []) { "yielded_result" }
+
+            expect(cache.read(cache_key_for(sql))).to eq("yielded_result")
+            expires_at = cache.instance_variable_get(:@data)[cache_key_for(sql)].expires_at
+            expect(expires_at).to be_between(Time.now.to_f + 120, Time.now.to_f + 150)
           end
         end
       end
