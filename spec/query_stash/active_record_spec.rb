@@ -283,6 +283,20 @@ RSpec.describe QueryStash::ActiveRecord do
       context "when cache has the result" do
         before { cache.write(cache_key_for(sql), "cached_result") }
 
+        it "emits cache_hit.query_stash, since hits never reach sql.active_record" do
+          registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 60, ttl_jitter_seconds: 0)
+          events = []
+          subscriber = ActiveSupport::Notifications.subscribe("cache_hit.query_stash") do |event|
+            events << event.payload
+          end
+
+          described_class.wrap(sql, []) { "yielded_result" }
+
+          expect(events).to eq([{ adapter: :active_record, rule: "user_queries" }])
+        ensure
+          ActiveSupport::Notifications.unsubscribe(subscriber)
+        end
+
         it "returns the cached result without yielding and calls on_cache_hit" do
           called_with_result = nil
           registry.add_rule(

@@ -156,6 +156,7 @@ module QueryStash
       rescue_cache_error do
         cached_result = cache.read(cache_key)
         if cached_result
+          ActiveSupport::Notifications.instrument("cache_hit.query_stash", adapter: :active_record, rule: rule.name)
           rule.on_cache_hit&.call(rule, cached_result)
           return cached_result
         end
