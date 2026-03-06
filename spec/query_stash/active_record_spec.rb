@@ -66,24 +66,10 @@ RSpec.describe QueryStash::ActiveRecord do
   describe QueryStash::ActiveRecord::AdapterPatch do
     let(:adapter) do
       Class.new do
-        if ActiveRecord.gem_version < Gem::Version.new("7.1.0")
-          def exec_query(_sql, _name = "SQL", _binds = [], prepare: false, **_kwargs)
-            "original_result"
-          end
-        else
-          def internal_exec_query(_sql, _name = "SQL", _binds = [], prepare: false, **_kwargs)
-            "original_result"
-          end
+        def internal_exec_query(_sql, _name = "SQL", _binds = [], prepare: false, **_kwargs)
+          "original_result"
         end
       end.prepend(described_class).new
-    end
-
-    def execute(sql)
-      if ActiveRecord.gem_version < Gem::Version.new("7.1.0")
-        adapter.exec_query(sql)
-      else
-        adapter.internal_exec_query(sql)
-      end
     end
 
     before do
@@ -94,8 +80,8 @@ RSpec.describe QueryStash::ActiveRecord do
 
     context "when the stash is not enabled" do
       it "calls super without using the cache" do
-        expect(execute("SELECT * FROM users")).to eq("original_result")
-        execute("SELECT * FROM users")
+        expect(adapter.internal_exec_query("SELECT * FROM users")).to eq("original_result")
+        adapter.internal_exec_query("SELECT * FROM users")
 
         expect(QueryStash::ActiveRecord.cache.instance_variable_get(:@data)).to be_empty
       end
@@ -104,7 +90,7 @@ RSpec.describe QueryStash::ActiveRecord do
     context "when the stash is enabled" do
       it "uses the cache for matching queries" do
         Thread.current[:query_stash_active_record_enabled] = true
-        execute("SELECT * FROM users")
+        adapter.internal_exec_query("SELECT * FROM users")
 
         expect(QueryStash::ActiveRecord.cache.instance_variable_get(:@data).length).to eq(1)
       ensure

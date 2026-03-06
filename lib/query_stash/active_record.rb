@@ -85,25 +85,13 @@ module QueryStash
     end
 
     module AdapterPatch
-      if ::ActiveRecord.gem_version < Gem::Version.new("7.1.0")
-        def exec_query(sql, name = "SQL", binds = [], prepare: false)
-          if Thread.current[:query_stash_active_record_enabled]
-            QueryStash::ActiveRecord.wrap(sql, binds) do
-              super(sql, name, binds, prepare: prepare)
-            end
-          else
-            super(sql, name, binds, prepare: prepare)
+      def internal_exec_query(sql, name = "SQL", binds = [], prepare: false, **kwargs)
+        if Thread.current[:query_stash_active_record_enabled]
+          QueryStash::ActiveRecord.wrap(sql, binds) do
+            super(sql, name, binds, prepare: prepare, **kwargs)
           end
-        end
-      else
-        def internal_exec_query(sql, name = "SQL", binds = [], prepare: false, **kwargs)
-          if Thread.current[:query_stash_active_record_enabled]
-            QueryStash::ActiveRecord.wrap(sql, binds) do
-              super(sql, name, binds, prepare: prepare, **kwargs)
-            end
-          else
-            super
-          end
+        else
+          super
         end
       end
     end
