@@ -245,7 +245,7 @@ RSpec.describe QueryStash::ActiveRecord do
           flag[:on] = true
 
           expect(subject).to eq("yielded_result")
-          expect(cache.read(cache_key_for(sql))).to eq("yielded_result")
+          expect(described_class.wrap(sql, []) { "different" }).to eq("yielded_result")
         end
       end
 
@@ -261,13 +261,15 @@ RSpec.describe QueryStash::ActiveRecord do
           )
 
           expect(described_class.wrap(sql, []) { "yielded_result" }).to eq("yielded_result")
-          expect(cache.read(cache_key_for(sql))).to eq("yielded_result")
           expect(called).to be(false)
+
+          # Verify cached: second call returns the same result without yielding
+          expect(described_class.wrap(sql, []) { "different" }).to eq("yielded_result")
         end
       end
 
       context "when cache has the result" do
-        before { cache.write(cache_key_for(sql), "cached_result") }
+        before { cache.write(cache_key_for(sql), described_class.send(:encode, "cached_result")) }
 
         it "emits cache_hit.query_stash, since hits never reach sql.active_record" do
           registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 60, ttl_jitter_seconds: 0)
@@ -324,7 +326,7 @@ RSpec.describe QueryStash::ActiveRecord do
           freeze_time do
             described_class.wrap(sql, []) { "yielded_result" }
 
-            expect(cache.read(cache_key_for(sql))).to eq("yielded_result")
+            expect(described_class.wrap(sql, []) { "different" }).to eq("yielded_result")
 
             entries = cache.instance_variable_get(:@data)
             expect(entries).to have_key(cache_key_for(sql))
@@ -344,7 +346,7 @@ RSpec.describe QueryStash::ActiveRecord do
           freeze_time do
             described_class.wrap(sql, []) { "yielded_result" }
 
-            expect(cache.read(cache_key_for(sql))).to eq("yielded_result")
+            expect(described_class.wrap(sql, []) { "different" }).to eq("yielded_result")
             expires_at = cache.instance_variable_get(:@data)[cache_key_for(sql)].expires_at
             expect(expires_at).to be_between(Time.now.to_f + 120, Time.now.to_f + 150)
           end

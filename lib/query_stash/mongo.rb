@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "digest"
+require "zlib"
 require "mongo"
 require "active_support"
 require "active_support/cache"
@@ -230,8 +231,9 @@ module QueryStash
       cache_key = cache_key_for(view.database.name, selector)
 
       rescue_cache_error do
-        cached_result = cache.read(cache_key)
-        if cached_result
+        cached_entry = cache.read(cache_key)
+        if cached_entry
+          cached_result = decode(cached_entry)
           rule.on_cache_hit&.call(rule, cached_result)
           return cached_result
         end
@@ -256,7 +258,7 @@ module QueryStash
 
         if ttl_seconds.positive?
           rule.on_cache_miss&.call(rule, result)
-          cache.write(cache_key, result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
+          cache.write(cache_key, encode(result), expires_in: ttl_seconds + rand(ttl_jitter_seconds))
         else
           rule.on_cache_skip&.call(rule, result)
         end
@@ -281,6 +283,14 @@ module QueryStash
       ].to_json
 
       "v1:#{database_name}:#{Digest::SHA256.hexdigest(raw)}"
+    end
+
+    def encode(value)
+      Zlib::Deflate.deflate(Marshal.dump(value), Zlib::BEST_SPEED)
+    end
+
+    def decode(stored)
+      Marshal.load(Zlib::Inflate.inflate(stored)) # rubocop:disable Security/MarshalLoad
     end
 
     def rescue_cache_error(&block)

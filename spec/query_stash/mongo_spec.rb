@@ -300,13 +300,15 @@ RSpec.describe QueryStash::Mongo do
           )
 
           expect(described_class.wrap(view) { "yielded_result" }).to eq("yielded_result")
-          expect(cache.read(cache_key_for(view))).to eq("yielded_result")
           expect(called).to be(false)
+
+          # Verify cached: second call returns the same result without yielding
+          expect(described_class.wrap(view) { "different" }).to eq("yielded_result")
         end
       end
 
       context "when cache has the result" do
-        before { cache.write(cache_key_for(view), "cached_result") }
+        before { cache.write(cache_key_for(view), described_class.send(:encode, "cached_result")) }
 
         it "returns the cached result without yielding and calls on_cache_hit" do
           called_with_result = nil
@@ -349,7 +351,7 @@ RSpec.describe QueryStash::Mongo do
           freeze_time do
             described_class.wrap(view) { "yielded_result" }
 
-            expect(cache.read(cache_key_for(view))).to eq("yielded_result")
+            expect(described_class.wrap(view) { "different" }).to eq("yielded_result")
 
             entries = cache.instance_variable_get(:@data)
             expect(entries).to have_key(cache_key_for(view))
@@ -367,7 +369,7 @@ RSpec.describe QueryStash::Mongo do
           freeze_time do
             described_class.wrap(view) { "yielded_result" }
 
-            expect(cache.read(cache_key_for(view))).to eq("yielded_result")
+            expect(described_class.wrap(view) { "different" }).to eq("yielded_result")
             expires_at = cache.instance_variable_get(:@data)[cache_key_for(view)].expires_at
             expect(expires_at).to be_between(Time.now.to_f + 120, Time.now.to_f + 150)
           end
