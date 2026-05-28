@@ -140,25 +140,17 @@ module QueryStash
     # ---------------- Mongo driver patches ----------------
     module BasePatch
       def with_query_stash(&block)
-        old = Thread.current[:query_stash_mongo_enabled]
-        Thread.current[:query_stash_mongo_enabled] = true
-        block.call
-      ensure
-        Thread.current[:query_stash_mongo_enabled] = old
+        QueryStash.state.wrap(query_stash_mongo_enabled: true, &block)
       end
 
       def without_query_stash(&block)
-        old = Thread.current[:query_stash_mongo_enabled]
-        Thread.current[:query_stash_mongo_enabled] = false
-        block.call
-      ensure
-        Thread.current[:query_stash_mongo_enabled] = old
+        QueryStash.state.wrap(query_stash_mongo_enabled: false, &block)
       end
     end
 
     module AdapterPatch
       def each
-        if Thread.current[:query_stash_mongo_enabled]
+        if QueryStash.state[:query_stash_mongo_enabled]
           result = QueryStash::Mongo.wrap(self) do
             result = []
             # Have to explicitly pass in a block because otherwise, this will yield

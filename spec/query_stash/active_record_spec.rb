@@ -89,31 +89,25 @@ RSpec.describe QueryStash::ActiveRecord do
 
     context "when the stash is enabled" do
       it "uses the cache for matching queries" do
-        Thread.current[:query_stash_active_record_enabled] = true
-        adapter.internal_exec_query("SELECT * FROM users")
+        ActiveRecord::Base.with_query_stash do
+          adapter.internal_exec_query("SELECT * FROM users")
 
-        expect(QueryStash::ActiveRecord.cache.instance_variable_get(:@data).length).to eq(1)
-      ensure
-        Thread.current[:query_stash_active_record_enabled] = false
+          expect(QueryStash::ActiveRecord.cache.instance_variable_get(:@data).length).to eq(1)
+        end
       end
     end
   end
 
   describe QueryStash::ActiveRecord::BasePatch do
     describe "#with_query_stash" do
-      before do
-        # Ensure clean state before test to avoid pollution from other tests
-        Thread.current[:query_stash_active_record_enabled] = nil
-      end
-
       it "enables the stash" do
-        expect(Thread.current[:query_stash_active_record_enabled]).to be_nil
+        expect(QueryStash.state[:query_stash_active_record_enabled]).to be_nil
 
         ActiveRecord::Base.with_query_stash do
-          expect(Thread.current[:query_stash_active_record_enabled]).to be(true)
+          expect(QueryStash.state[:query_stash_active_record_enabled]).to be(true)
         end
 
-        expect(Thread.current[:query_stash_active_record_enabled]).to be_nil
+        expect(QueryStash.state[:query_stash_active_record_enabled]).to be_nil
       end
     end
 
@@ -125,14 +119,89 @@ RSpec.describe QueryStash::ActiveRecord do
       end
 
       it "disables the stash" do
-        expect(Thread.current[:query_stash_active_record_enabled]).to be(true)
+        expect(QueryStash.state[:query_stash_active_record_enabled]).to be(true)
 
         ActiveRecord::Base.without_query_stash do
-          expect(Thread.current[:query_stash_active_record_enabled]).to be(false)
+          expect(QueryStash.state[:query_stash_active_record_enabled]).to be(false)
         end
 
-        expect(Thread.current[:query_stash_active_record_enabled]).to be(true)
+        expect(QueryStash.state[:query_stash_active_record_enabled]).to be(true)
       end
+    end
+  end
+
+  describe "the stash across spawned threads" do
+    # Fake adapter that counts how many times it actually hits the "database"
+    # (i.e. the underlying internal_exec_query without caching).
+    let(:fake_adapter) do
+      Class.new do
+        attr_reader :db_call_count
+
+        def initialize
+          @db_call_count = 0
+        end
+
+        def internal_exec_query(_sql, _name = "SQL", _binds = [], prepare: false, **_kwargs)
+          @db_call_count += 1
+          "db_result"
+        end
+      end.prepend(QueryStash::ActiveRecord::AdapterPatch).new
+    end
+
+    # Stands in for an application context that child threads inherit.
+    let(:inherited_state) do
+      Class.new do
+        def initialize
+          @values = {}
+        end
+
+        def [](key)
+          @values[key]
+        end
+
+        def wrap(**values)
+          previous = @values.dup
+          @values.merge!(values)
+          yield
+        ensure
+          @values = previous
+        end
+      end.new
+    end
+
+    let(:sql) { "SELECT * FROM organizations WHERE organizations.id = 1" }
+
+    before do
+      described_class.cache.clear
+      described_class.registry.instance_variable_set(:@rules, [])
+      described_class.registry.add_rule(/SELECT.*organizations/, name: "test_org_rule", ttl_seconds: 60,
+                                                                 ttl_jitter_seconds: 0)
+    end
+
+    after { QueryStash.state = nil }
+
+    def query_in_parent_then_spawned_thread
+      ActiveRecord::Base.with_query_stash do
+        fake_adapter.internal_exec_query(sql)
+        fake_adapter.internal_exec_query(sql)
+        expect(fake_adapter.db_call_count).to eq(1)
+
+        Thread.new { fake_adapter.internal_exec_query(sql) }.join
+      end
+    end
+
+    it "does not carry the flag into spawned threads with the default state" do
+      query_in_parent_then_spawned_thread
+
+      expect(fake_adapter.db_call_count).to eq(2)
+    end
+
+    it "serves the spawned thread from the cache when the state is inherited" do
+      QueryStash.state = inherited_state
+
+      query_in_parent_then_spawned_thread
+
+      expect(fake_adapter.db_call_count).to eq(1)
     end
   end
 

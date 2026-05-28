@@ -143,13 +143,9 @@ RSpec.describe QueryStash::Mongo do
       )
     end
 
-    after do
-      Thread.current[:query_stash_mongo_enabled] = false
-    end
-
     context "when the stash is enabled" do
-      before do
-        Thread.current[:query_stash_mongo_enabled] = true
+      around do |example|
+        Mongo.with_query_stash { example.run }
       end
 
       it "uses the cache for matching queries" do
@@ -160,10 +156,6 @@ RSpec.describe QueryStash::Mongo do
     end
 
     context "when the stash is not enabled" do
-      before do
-        Thread.current[:query_stash_mongo_enabled] = false
-      end
-
       it "does not use the cache" do
         view.each
 
@@ -174,19 +166,14 @@ RSpec.describe QueryStash::Mongo do
 
   describe QueryStash::Mongo::BasePatch do
     describe "#with_query_stash" do
-      before do
-        # Ensure clean state before test to avoid pollution from other tests
-        Thread.current[:query_stash_mongo_enabled] = nil
-      end
-
       it "enables the stash" do
-        expect(Thread.current[:query_stash_mongo_enabled]).to be_nil
+        expect(QueryStash.state[:query_stash_mongo_enabled]).to be_nil
 
         Mongo.with_query_stash do
-          expect(Thread.current[:query_stash_mongo_enabled]).to be(true)
+          expect(QueryStash.state[:query_stash_mongo_enabled]).to be(true)
         end
 
-        expect(Thread.current[:query_stash_mongo_enabled]).to be_nil
+        expect(QueryStash.state[:query_stash_mongo_enabled]).to be_nil
       end
     end
 
@@ -198,13 +185,13 @@ RSpec.describe QueryStash::Mongo do
       end
 
       it "disables the stash" do
-        expect(Thread.current[:query_stash_mongo_enabled]).to be(true)
+        expect(QueryStash.state[:query_stash_mongo_enabled]).to be(true)
 
         Mongo.without_query_stash do
-          expect(Thread.current[:query_stash_mongo_enabled]).to be(false)
+          expect(QueryStash.state[:query_stash_mongo_enabled]).to be(false)
         end
 
-        expect(Thread.current[:query_stash_mongo_enabled]).to be(true)
+        expect(QueryStash.state[:query_stash_mongo_enabled]).to be(true)
       end
     end
   end

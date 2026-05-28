@@ -10,20 +10,18 @@ RSpec.describe QueryStash::Rack::Middleware do
       seen = nil
       app = lambda do |_env|
         seen = [
-          Thread.current[:query_stash_active_record_enabled],
-          Thread.current[:query_stash_mongo_enabled]
+          QueryStash.state[:query_stash_active_record_enabled],
+          QueryStash.state[:query_stash_mongo_enabled]
         ]
         [200, {}, ["ok"]]
       end
-      Thread.current[:query_stash_active_record_enabled] = nil
-      Thread.current[:query_stash_mongo_enabled] = nil
 
       response = described_class.new(app).call({})
 
       expect(response).to eq([200, {}, ["ok"]])
       expect(seen).to eq([true, true])
-      expect(Thread.current[:query_stash_active_record_enabled]).to be_nil
-      expect(Thread.current[:query_stash_mongo_enabled]).to be_nil
+      expect(QueryStash.state[:query_stash_active_record_enabled]).to be_nil
+      expect(QueryStash.state[:query_stash_mongo_enabled]).to be_nil
     end
   end
 end

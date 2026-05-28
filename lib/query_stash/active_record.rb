@@ -69,25 +69,17 @@ module QueryStash
     # ---------- ActiveRecord patches ----------
     module BasePatch
       def with_query_stash(&block)
-        old = Thread.current[:query_stash_active_record_enabled]
-        Thread.current[:query_stash_active_record_enabled] = true
-        block.call
-      ensure
-        Thread.current[:query_stash_active_record_enabled] = old
+        QueryStash.state.wrap(query_stash_active_record_enabled: true, &block)
       end
 
       def without_query_stash(&block)
-        old = Thread.current[:query_stash_active_record_enabled]
-        Thread.current[:query_stash_active_record_enabled] = false
-        block.call
-      ensure
-        Thread.current[:query_stash_active_record_enabled] = old
+        QueryStash.state.wrap(query_stash_active_record_enabled: false, &block)
       end
     end
 
     module AdapterPatch
       def internal_exec_query(sql, name = "SQL", binds = [], prepare: false, **kwargs)
-        if Thread.current[:query_stash_active_record_enabled]
+        if QueryStash.state[:query_stash_active_record_enabled]
           QueryStash::ActiveRecord.wrap(sql, binds) do
             super(sql, name, binds, prepare: prepare, **kwargs)
           end
