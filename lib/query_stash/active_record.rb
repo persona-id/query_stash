@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "digest"
-require "zlib"
 require "active_record"
 require "query_stash"
 
@@ -95,7 +94,7 @@ module QueryStash
     attr_writer :cache
 
     def cache
-      @cache ||= ActiveSupport::Cache::MemoryStore.new(size: 128.megabytes)
+      @cache ||= ActiveSupport::Cache::MemoryStore.new(size: 128.megabytes, compress: true)
     end
 
     def cache_usage_bytes
@@ -135,9 +134,9 @@ module QueryStash
       cache_key = cache_key_for(sql)
 
       rescue_cache_error do
-        cached_entry = cache.read(cache_key)
-        if cached_entry
-          cached_result = decode(cached_entry)
+        cached_result = cache.read(cache_key)
+        # Results are always ActiveRecord::Result (never nil), so nil means a miss.
+        unless cached_result.nil?
           ActiveSupport::Notifications.instrument("cache_hit.query_stash", adapter: :active_record, rule: rule.name)
           rule.on_cache_hit&.call(rule, cached_result)
           return cached_result
@@ -163,7 +162,7 @@ module QueryStash
 
         if ttl_seconds.positive?
           rule.on_cache_miss&.call(rule, result)
-          cache.write(cache_key, encode(result), expires_in: ttl_seconds + rand(ttl_jitter_seconds))
+          cache.write(cache_key, result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
         else
           rule.on_cache_skip&.call(rule, result)
         end
@@ -180,14 +179,6 @@ module QueryStash
       # Also note that Marginalia comments are applied AFTER this since
       # this module is prepended.
       "v1:#{::ActiveRecord::Base.current_shard}:#{Digest::SHA256.hexdigest(sql)}"
-    end
-
-    def encode(value)
-      Zlib::Deflate.deflate(Marshal.dump(value), Zlib::BEST_SPEED)
-    end
-
-    def decode(stored)
-      Marshal.load(Zlib::Inflate.inflate(stored)) # rubocop:disable Security/MarshalLoad
     end
 
     def rescue_cache_error(&block)

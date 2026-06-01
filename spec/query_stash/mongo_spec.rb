@@ -295,7 +295,7 @@ RSpec.describe QueryStash::Mongo do
       end
 
       context "when cache has the result" do
-        before { cache.write(cache_key_for(view), described_class.send(:encode, "cached_result")) }
+        before { cache.write(cache_key_for(view), "cached_result") }
 
         it "returns the cached result without yielding and calls on_cache_hit" do
           called_with_result = nil

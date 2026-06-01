@@ -338,7 +338,7 @@ RSpec.describe QueryStash::ActiveRecord do
       end
 
       context "when cache has the result" do
-        before { cache.write(cache_key_for(sql), described_class.send(:encode, "cached_result")) }
+        before { cache.write(cache_key_for(sql), "cached_result") }
 
         it "emits cache_hit.query_stash, since hits never reach sql.active_record" do
           registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 60, ttl_jitter_seconds: 0)
