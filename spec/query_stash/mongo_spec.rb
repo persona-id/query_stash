@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "tmpdir"
 require "active_support/testing/time_helpers"
 require "query_stash/mongo"
 
@@ -235,6 +236,16 @@ RSpec.describe QueryStash::Mongo do
       expect(described_class.cache_usage_bytes).to eq(1024)
       stats["used_memory"] = 2048
       expect(described_class.cache_usage_bytes).to eq(1024)
+    end
+    
+    it "reports the size of a file store" do
+      Dir.mktmpdir do |dir|
+        described_class.cache = described_class.file_store(File.join(dir, "cache"), lock_path: File.join(dir, "lock"))
+        described_class.instance_variable_set(:@file_cache_stats_last_updated_at, nil)
+    
+        expect(described_class.cache).to be_a(ActiveSupport::Cache::FileStore)
+        expect(described_class.cache_usage_bytes).to be_a(Integer)
+      end
     end
   end
 

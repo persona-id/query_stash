@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "digest"
+require "open3"
 require "active_record"
 require "query_stash"
 
@@ -97,6 +98,27 @@ module QueryStash
       @cache ||= ActiveSupport::Cache::MemoryStore.new(size: 128.megabytes, compress: true)
     end
 
+    def file_store(cache_path, lock_path:)
+      store = ActiveSupport::Cache::FileStore.new(cache_path)
+      # set up evictor thread, as file store grows unbounded otherwise
+      Thread.start(store) do |file_cache|
+        Thread.current.name = "query-stash-active-record-evictor"
+        loop do
+          sleep 5 * 60 # 5 min
+          File.open(lock_path, File::RDWR | File::CREAT) do |f|
+            file_cache.cleanup if f.flock(File::LOCK_EX | File::LOCK_NB)
+          end
+          sleep rand # jitter
+        rescue Interrupt
+          break
+        rescue StandardError => e
+          # failed to clean up the file cache
+          ActiveSupport.error_reporter.report(e, handled: true)
+        end
+      end
+      store
+    end
+
     def cache_usage_bytes
       if cache.respond_to?(:redis)
         # Only update cache stats once every minute to avoid excessive Redis calls
@@ -106,6 +128,24 @@ module QueryStash
         end
 
         @_cache_stats&.fetch("used_memory", nil)&.to_i
+      elsif cache.is_a?(ActiveSupport::Cache::FileStore)
+        # Only update cache stats once every 30 seconds to avoid excessive STAT syscalls
+        if @file_cache_stats_last_updated_at.blank? || @file_cache_stats_last_updated_at < 30.seconds.ago
+          @file_cache_stats_last_updated_at = Time.current
+          @file_cache_stats = nil
+        end
+
+        @file_cache_stats ||= begin
+          o, e, s = Open3.capture3("du", cache.cache_path, "-bs")
+
+          if s.success?
+            # ex: 128234328   path/to/dir
+            o.split(/\W+/).first.to_i
+          else
+            cache.logger&.error(e)
+            0
+          end
+        end
       else
         # WARNING: relies on internal ActiveSupport::Cache::MemoryStore API
         cache.instance_variable_get(:@cache_size)
