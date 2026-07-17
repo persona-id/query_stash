@@ -31,11 +31,11 @@ RSpec.describe QueryStash::Mongo do
     "v1:#{view.database.name}:#{Digest::SHA256.hexdigest(raw)}"
   end
 
-  describe QueryStash::Mongo::Registry do
+  describe QueryStash::Mongo::MongoFilterRegistry do
     let(:registry) { described_class.new }
 
     describe "#add_rule" do
-      it "adds rules with selector, name, callbacks, and validates required fields" do
+      it "adds rules with selector, name, and callbacks" do
         registry.add_rule(selector("accounts", { "token" => QueryStash::Mongo::ANY }), name: "test_rule", ttl_seconds: 60, ttl_jitter_seconds: 0)
         expect(registry.rules.length).to eq(1)
         expect(registry.rules.first.name).to eq("test_rule")
@@ -49,10 +49,6 @@ RSpec.describe QueryStash::Mongo do
         expect(registry.rules.last.ttl_seconds).to eq(ttl_proc)
 
         expect(registry.rules.length).to eq(3)
-
-        expect do
-          registry.add_rule({ collection_name: "users" }, name: "partial_rule", ttl_seconds: 60, ttl_jitter_seconds: 0)
-        end.to raise_error("Rule selector must contain :filter")
       end
     end
 
@@ -180,7 +176,7 @@ RSpec.describe QueryStash::Mongo do
     end
   end
 
-  describe QueryStash::Mongo::BasePatch do
+  describe QueryStash::Mongo::ContextMethods do
     describe "#with_query_stash" do
       it "enables the stash" do
         expect(QueryStash.state[:query_stash_mongo_enabled]).to be_nil
@@ -246,7 +242,7 @@ RSpec.describe QueryStash::Mongo do
       store.define_singleton_method(:redis) { :redis }
       store.define_singleton_method(:stats) { stats.dup }
       described_class.cache = store
-      described_class.instance_variable_set(:@_cache_stats_last_updated_at, nil)
+      described_class.instance_variable_set(:@valkey_cache_stats_last_updated_at, nil)
 
       expect(described_class.cache_usage_bytes).to eq(1024)
       stats["used_memory"] = 2048

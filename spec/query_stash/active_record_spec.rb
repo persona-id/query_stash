@@ -9,7 +9,7 @@ RSpec.describe QueryStash::ActiveRecord do
     "v1:#{ActiveRecord::Base.current_shard}:#{Digest::SHA256.hexdigest(sql)}"
   end
 
-  describe QueryStash::ActiveRecord::Registry do
+  describe QueryStash::ActiveRecord::SqlRegistry do
     let(:registry) { described_class.new }
 
     describe "#add_rule" do
@@ -17,7 +17,7 @@ RSpec.describe QueryStash::ActiveRecord do
         enabled = -> { true }
         registry.add_rule(/SELECT/, name: "test_rule", ttl_seconds: 60, ttl_jitter_seconds: 0, enabled: enabled)
         expect(registry.rules.length).to eq(1)
-        expect(registry.rules.first.regex).to eq(/SELECT/)
+        expect(registry.rules.first.selector).to eq(/SELECT/)
         expect(registry.rules.first.name).to eq("test_rule")
         expect(registry.rules.first.enabled).to eq(enabled)
 
@@ -99,7 +99,7 @@ RSpec.describe QueryStash::ActiveRecord do
     end
   end
 
-  describe QueryStash::ActiveRecord::BasePatch do
+  describe QueryStash::ActiveRecord::ContextMethods do
     describe "#with_query_stash" do
       it "enables the stash" do
         expect(QueryStash.state[:query_stash_active_record_enabled]).to be_nil
@@ -240,7 +240,7 @@ RSpec.describe QueryStash::ActiveRecord do
       store.define_singleton_method(:redis) { :redis }
       store.define_singleton_method(:stats) { stats.dup }
       described_class.cache = store
-      described_class.instance_variable_set(:@_cache_stats_last_updated_at, nil)
+      described_class.instance_variable_set(:@valkey_cache_stats_last_updated_at, nil)
 
       expect(described_class.cache_usage_bytes).to eq(1024)
       stats["used_memory"] = 2048

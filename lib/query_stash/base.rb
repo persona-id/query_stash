@@ -1,0 +1,215 @@
+# frozen_string_literal: true
+
+require "open3"
+require "concurrent/map"
+require "active_support"
+require "active_support/cache"
+require "active_support/core_ext/object/blank"
+require "active_support/core_ext/numeric/time"
+require "query_stash"
+
+module QueryStash
+  module Base
+    class Registry
+      Rule = Data.define(
+        :selector,
+        :name,
+        :ttl_seconds,
+        :ttl_jitter_seconds,
+        :on_cache_hit,
+        :on_cache_miss,
+        :on_cache_skip,
+        :enabled
+      )
+
+      attr_reader :rules
+
+      def initialize
+        @rules = []
+      end
+
+      def add_rule(
+        selector, # required
+        name:,
+        ttl_seconds:,
+        ttl_jitter_seconds:,
+        on_cache_hit: nil,
+        on_cache_miss: nil,
+        on_cache_skip: nil,
+        enabled: nil
+      )
+        raise "Rule name is required" if name.blank?
+
+        raise "Rule name #{name.inspect} is already taken" if @rules.any? { |r| r.name == name }
+
+        @rules << Rule.new(
+          selector: selector,
+          name: name,
+          ttl_seconds: ttl_seconds,
+          ttl_jitter_seconds: ttl_jitter_seconds,
+          on_cache_hit: on_cache_hit,
+          on_cache_miss: on_cache_miss,
+          on_cache_skip: on_cache_skip,
+          enabled: enabled
+        )
+      end
+
+      def delete_rule(name)
+        @rules.delete_if { |r| r.name == name }
+      end
+
+      # Selector / options / collection-based lookup
+      def match_rule(selector)
+        @rules.detect do |rule|
+          value_matches_pattern?(selector, rule.selector)
+        end
+      end
+
+      private
+
+      # Pattern matching for hashes.
+      #
+      # `pattern` is a subset / pattern-form of `full`:
+      # - wildcards and special values are interpreted via value_matches_pattern?
+      #
+      def hash_matches_pattern?(full, pattern)
+        pattern.all? do |k, expected|
+          full.key?(k) && value_matches_pattern?(full[k], expected)
+        end
+      end
+
+      # Pattern semantics:
+      #
+      # - Proc:
+      #     pattern.call(actual) must be truthy
+      # - Regexp:
+      #     actual.to_s must match pattern
+      # - Hash:
+      #     pattern is a nested hash pattern, recurse
+      # - Array:
+      #     pattern is a "prefix" array pattern:
+      #       - pattern length <= actual length
+      #       - each element is matched via value_matches_pattern?
+      # - Fallback:
+      #     actual == pattern
+      #
+      def value_matches_pattern?(actual, pattern)
+        # Proc – fully custom predicate (Note: ANY is not a Proc)
+        return !!pattern.call(actual) if pattern.respond_to?(:call)
+
+        # Regexp – string-like match
+        return pattern.match?(actual.to_s) if pattern.is_a?(Regexp)
+
+        # Hash – recursive hash pattern
+        return hash_matches_pattern?(actual, pattern) if pattern.is_a?(Hash) && actual.is_a?(Hash)
+
+        # Array – element-wise prefix pattern
+        if pattern.is_a?(Array) && actual.is_a?(Array)
+          return false if pattern.length > actual.length
+
+          return pattern.each_with_index.all? do |pat_elem, idx|
+            value_matches_pattern?(actual[idx], pat_elem)
+          end
+        end
+
+        # Fallback: strict equality
+        actual == pattern
+      end
+    end
+
+    attr_writer :cache
+
+    def cache
+      @cache ||= ActiveSupport::Cache::MemoryStore.new(size: 128.megabytes, compress: true)
+    end
+
+    def file_store(cache_path, lock_path:)
+      ActiveSupport::Cache::FileStore.new(cache_path).tap do |store|
+        start_file_cache_evictor(store, 5 * 60, lock_path) # 5 min
+      end
+    end
+
+    def cache_usage_bytes
+      cache_obj = cache
+      if cache_obj.respond_to?(:redis)
+        # Only update cache stats once every minute to avoid excessive Redis calls
+        if @valkey_cache_stats_last_updated_at.blank? || @valkey_cache_stats_last_updated_at < 1.minute.ago
+          @valkey_cache_stats_last_updated_at = Time.current
+          @valkey_cache_stats = cache_obj.stats
+        end
+
+        @valkey_cache_stats&.fetch("used_memory", nil)&.to_i
+      elsif cache_obj.is_a?(ActiveSupport::Cache::FileStore)
+        # Only update cache stats once every 30 seconds to avoid excessive STAT syscalls
+        if @file_cache_stats_last_updated_at.blank? || @file_cache_stats_last_updated_at < 30.seconds.ago
+          @file_cache_stats_last_updated_at = Time.current
+          @file_cache_stats = nil
+        end
+
+        @file_cache_stats ||= begin
+          o, e, s = Open3.capture3("du", cache_obj.cache_path, "-bs")
+
+          if s.success?
+            # ex: 128234328   path/to/dir
+            o.split(/\W+/).first.to_i
+          else
+            cache_obj.logger&.error(e)
+            0
+          end
+        end
+      else
+        # WARNING: relies on internal ActiveSupport::Cache::MemoryStore API
+        cache_obj.instance_variable_get(:@cache_size)
+      end
+    end
+
+    EVICTOR_MUTEXES = Concurrent::Map.new
+
+    # starts background thread to periodically clean up the file cache so it does not grow
+    # unbounded.
+    def start_file_cache_evictor(file_cache, sleep_interval, lock_path)
+      @file_cache_evictor ||
+        EVICTOR_MUTEXES.compute_if_absent("query-stash-#{prefix}-evictor-mutex") { Mutex.new }
+                       .synchronize do
+                         @file_cache_evictor ||= Thread.start do
+                           Thread.current.name = "query-stash-#{prefix}-evictor"
+                           loop do
+                             sleep sleep_interval
+                             File.open(lock_path, File::RDWR | File::CREAT) do |f|
+                               file_cache.cleanup if f.flock(File::LOCK_EX | File::LOCK_NB)
+                             end
+                             sleep rand # jitter
+                           rescue Interrupt
+                             break
+                           rescue Errno::ENOENT
+                             # directory structure may have changed meanwhile, file/dir not found.
+                             next
+                           rescue StandardError => e
+                             # failed to clean up the file cache
+                             ActiveSupport.error_reporter.report(e, handled: true)
+                           end
+                         end
+                       end
+    end
+
+    def registry
+      @_registry ||= Registry.new
+    end
+
+    def configure
+      yield registry
+    end
+
+    def rescue_cache_error(&block)
+      block.call
+    rescue Errno::ENOENT
+      # file store cache may raise these errors when there's a conflict with the
+      # cleanup making files disappear.
+      nil
+    rescue StandardError => e
+      raise e if QueryStash.raise_errors
+
+      ActiveSupport.error_reporter.report(e, handled: true)
+    end
+  end
+end
