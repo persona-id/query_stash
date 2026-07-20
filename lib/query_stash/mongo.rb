@@ -203,15 +203,16 @@ module QueryStash
     end
 
     def cache_usage_bytes
-      if cache.respond_to?(:redis)
+      cache_obj = cache
+      if cache_obj.respond_to?(:redis)
         # Only update cache stats once every minute to avoid excessive Redis calls
         if @_cache_stats_last_updated_at.blank? || @_cache_stats_last_updated_at < 1.minute.ago
           @_cache_stats_last_updated_at = Time.current
-          @_cache_stats = cache.stats
+          @_cache_stats = cache_obj.stats
         end
 
         @_cache_stats&.fetch("used_memory", nil)&.to_i
-      elsif cache.is_a?(ActiveSupport::Cache::FileStore)
+      elsif cache_obj.is_a?(ActiveSupport::Cache::FileStore)
         # Only update cache stats once every 30 seconds to avoid excessive STAT syscalls
         if @file_cache_stats_last_updated_at.blank? || @file_cache_stats_last_updated_at < 30.seconds.ago
           @file_cache_stats_last_updated_at = Time.current
@@ -219,19 +220,19 @@ module QueryStash
         end
 
         @file_cache_stats ||= begin
-          o, e, s = Open3.capture3("du", cache.cache_path, "-bs")
+          o, e, s = Open3.capture3("du", cache_obj.cache_path, "-bs")
 
           if s.success?
             # ex: 128234328   path/to/dir
             o.split(/\W+/).first.to_i
           else
-            cache.logger&.error(e)
+            cache_obj.logger&.error(e)
             0
           end
         end
       else
         # WARNING: relies on internal ActiveSupport::Cache::MemoryStore API
-        cache.instance_variable_get(:@cache_size)
+        cache_obj.instance_variable_get(:@cache_size)
       end
     end
 
@@ -260,9 +261,10 @@ module QueryStash
       return yield unless rule
 
       cache_key = cache_key_for(view.database.name, selector)
+      cache_obj = cache
 
       rescue_cache_error do
-        cached_result = cache.read(cache_key)
+        cached_result = cache_obj.read(cache_key)
         # Results are always Arrays (never nil), so nil unambiguously means a miss.
         unless cached_result.nil?
           rule.on_cache_hit&.call(rule, cached_result)
@@ -289,7 +291,7 @@ module QueryStash
 
         if ttl_seconds.positive?
           rule.on_cache_miss&.call(rule, result)
-          cache.write(cache_key, result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
+          cache_obj.write(cache_key, result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
         else
           rule.on_cache_skip&.call(rule, result)
         end
