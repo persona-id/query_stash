@@ -151,7 +151,12 @@ module QueryStash
     module AdapterPatch
       def each
         if QueryStash.state[:query_stash_mongo_enabled]
-          result = QueryStash::Mongo.wrap(self) do
+          result = QueryStash::Mongo.wrap(self) do |cacheable:|
+            # Avoid eager loading the entire result set unless this query actually
+            # matches a cache rule. This can cause very quick OOMs
+            # if it has to load a whole collection at once
+            return super unless cacheable
+
             result = []
             # Have to explicitly pass in a block because otherwise, this will yield
             # and break processing immediately.
@@ -258,7 +263,7 @@ module QueryStash
       }
 
       rule = registry.match_rule(selector)
-      return yield unless rule
+      return yield(cacheable: false) unless rule
 
       cache_key = cache_key_for(view.database.name, selector)
       cache_obj = cache
@@ -272,7 +277,7 @@ module QueryStash
         end
       end
 
-      result = yield
+      result = yield(cacheable: true)
 
       rescue_cache_error do
         ttl_seconds =

@@ -113,7 +113,7 @@ RSpec.describe QueryStash::Mongo do
       collection = instance_double(Mongo::Collection, name: "test_collection")
       database = instance_double(Mongo::Database, name: "test_db")
       Class.new do
-        attr_reader :collection, :database, :filter, :options
+        attr_reader :collection, :database, :filter, :options, :received_block
 
         define_method(:initialize) do
           @collection = collection
@@ -126,8 +126,9 @@ RSpec.describe QueryStash::Mongo do
           method == :pipeline ? false : super
         end
 
-        def each
-          yield "original_result" if block_given?
+        def each(&block)
+          @received_block = block
+          yield "original_result" if block
           ["original_result"]
         end
       end.prepend(described_class).new
@@ -153,6 +154,20 @@ RSpec.describe QueryStash::Mongo do
         view.each
 
         expect(QueryStash::Mongo.cache.instance_variable_get(:@data).length).to eq(1)
+      end
+
+      context "when no rule matches" do
+        before { QueryStash::Mongo.registry.instance_variable_set(:@rules, []) }
+
+        it "streams the cursor through without buffering or caching it" do
+          docs = []
+          caller_block = proc { |doc| docs << doc }
+          view.each(&caller_block)
+
+          expect(view.received_block).to be(caller_block)
+          expect(docs).to eq(["original_result"])
+          expect(QueryStash::Mongo.cache.instance_variable_get(:@data)).to be_empty
+        end
       end
     end
 
@@ -279,13 +294,34 @@ RSpec.describe QueryStash::Mongo do
     end
 
     context "when no rule matches" do
-      it "yields without caching" do
-        expect(subject).to eq("yielded_result")
+      it "yields with cacheable false and does not cache" do
+        received_cacheable = nil
+        result = described_class.wrap(view) do |cacheable:|
+          received_cacheable = cacheable
+          "yielded_result"
+        end
+
+        expect(result).to eq("yielded_result")
+        expect(received_cacheable).to be(false)
         expect(cache.instance_variable_get(:@data)).to be_empty
       end
     end
 
     context "when a rule matches" do
+      context "when signaling cacheability to the block" do
+        before { registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 60, ttl_jitter_seconds: 0) }
+
+        it "yields with cacheable true" do
+          received_cacheable = nil
+          described_class.wrap(view) do |cacheable:|
+            received_cacheable = cacheable
+            "yielded_result"
+          end
+
+          expect(received_cacheable).to be(true)
+        end
+      end
+
       context "when cache is empty" do
         it "yields and caches the result without calling on_cache_hit" do
           called = false
