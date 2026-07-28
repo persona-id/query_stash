@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 
 require "open3"
-require "concurrent/map"
 require "active_support"
 require "active_support/cache"
 require "active_support/core_ext/object/blank"
 require "active_support/core_ext/numeric/time"
 require "query_stash"
+require "query_stash/file_store"
 
 module QueryStash
   module Base
@@ -124,9 +124,7 @@ module QueryStash
     end
 
     def file_store(cache_path, lock_path:)
-      ActiveSupport::Cache::FileStore.new(cache_path).tap do |store|
-        start_file_cache_evictor(store, 5 * 60, lock_path) # 5 min
-      end
+      QueryStash::FileStore.new("query-stash-#{prefix}", cache_path, lock_path: lock_path)
     end
 
     def cache_usage_bytes
@@ -161,35 +159,6 @@ module QueryStash
         # WARNING: relies on internal ActiveSupport::Cache::MemoryStore API
         cache_obj.instance_variable_get(:@cache_size)
       end
-    end
-
-    EVICTOR_MUTEXES = Concurrent::Map.new
-
-    # starts background thread to periodically clean up the file cache so it does not grow
-    # unbounded.
-    def start_file_cache_evictor(file_cache, sleep_interval, lock_path)
-      @file_cache_evictor ||
-        EVICTOR_MUTEXES.compute_if_absent("query-stash-#{prefix}-evictor-mutex") { Mutex.new }
-                       .synchronize do
-                         @file_cache_evictor ||= Thread.start do
-                           Thread.current.name = "query-stash-#{prefix}-evictor"
-                           loop do
-                             sleep sleep_interval
-                             File.open(lock_path, File::RDWR | File::CREAT) do |f|
-                               file_cache.cleanup if f.flock(File::LOCK_EX | File::LOCK_NB)
-                             end
-                             sleep rand # jitter
-                           rescue Interrupt
-                             break
-                           rescue Errno::ENOENT
-                             # directory structure may have changed meanwhile, file/dir not found.
-                             next
-                           rescue StandardError => e
-                             # failed to clean up the file cache
-                             ActiveSupport.error_reporter.report(e, handled: true)
-                           end
-                         end
-                       end
     end
 
     def registry
