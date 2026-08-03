@@ -4,13 +4,14 @@ require "active_support"
 require "active_support/cache"
 
 module QueryStash
-  # The evictor deletes empty cache directories out from under concurrent writes, so a rename can
-  # land on a path that vanished after `ensure_cache_path`. Rescued here, below
-  # `ActiveSupport::Cache::Store#instrument`, so the lost write isn't recorded as an exception on the
-  # surrounding cache instrumentation.
+  # The evictor and the other processes sharing this cache path delete files and directories
+  # concurrently, so an operation can find its path already gone: a write's rename lands in a
+  # directory removed after `ensure_cache_path`, and a read that deletes an expired entry loses the
+  # file mid-delete — which ActiveSupport re-raises whenever the key gets rewritten before it can
+  # double-check.
   #
-  # Reads need no equivalent: `FileStore#read_serialized_entry` already swallows every error and
-  # treats it as a miss.
+  # Both are rescued below `ActiveSupport::Cache::Store#instrument`, so a lost cache entry isn't
+  # recorded as an exception on the surrounding cache instrumentation.
   class FileStore < ::ActiveSupport::Cache::FileStore
     EVICTOR_SLEEP_INTERVAL = 5 * 60
 
@@ -42,6 +43,12 @@ module QueryStash
     private
 
     def write_serialized_entry(...)
+      super
+    rescue Errno::ENOENT
+      false
+    end
+
+    def delete_entry(...)
       super
     rescue Errno::ENOENT
       false
