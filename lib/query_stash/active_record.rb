@@ -63,7 +63,15 @@ module QueryStash
       cache_key = cache_key_for(sql)
 
       rescue_cache_error do
-        cached_result = cache.read(cache_key)
+        cached_result = ActiveSupport::Notifications.instrument(
+          "cache_read.query_stash",
+          adapter: :active_record,
+          rule: rule.name
+        ) do |payload|
+          value = cache.read(cache_key)
+          payload[:hit] = !value.nil?
+          value
+        end
         # Results are always ActiveRecord::Result (never nil), so nil means a miss.
         unless cached_result.nil?
           ActiveSupport::Notifications.instrument("cache_hit.query_stash", adapter: :active_record, rule: rule.name)

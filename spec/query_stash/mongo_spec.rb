@@ -362,6 +362,31 @@ RSpec.describe QueryStash::Mongo do
         end
       end
 
+      context "when the cache is read" do
+        before { registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 60, ttl_jitter_seconds: 0) }
+
+        def read_events
+          events = []
+          subscriber = ActiveSupport::Notifications.subscribe("cache_read.query_stash") do |event|
+            events << event.payload
+          end
+          described_class.wrap(view) { "yielded_result" }
+          events
+        ensure
+          ActiveSupport::Notifications.unsubscribe(subscriber)
+        end
+
+        it "instruments the read with the rule name" do
+          expect(read_events).to eq([{ adapter: :mongo, rule: "accounts_by_token", hit: false }])
+        end
+
+        it "marks the read as a hit when the cache has the result" do
+          cache.write(cache_key_for(view), "cached_result")
+
+          expect(read_events).to eq([{ adapter: :mongo, rule: "accounts_by_token", hit: true }])
+        end
+      end
+
       context "when TTL is zero or negative" do
         before { registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 0, ttl_jitter_seconds: 0) }
 

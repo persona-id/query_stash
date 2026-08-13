@@ -387,6 +387,31 @@ RSpec.describe QueryStash::ActiveRecord do
         end
       end
 
+      context "when the cache is read" do
+        before { registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 60, ttl_jitter_seconds: 0) }
+
+        def read_events
+          events = []
+          subscriber = ActiveSupport::Notifications.subscribe("cache_read.query_stash") do |event|
+            events << event.payload
+          end
+          described_class.wrap(sql, []) { "yielded_result" }
+          events
+        ensure
+          ActiveSupport::Notifications.unsubscribe(subscriber)
+        end
+
+        it "instruments the read with the rule name" do
+          expect(read_events).to eq([{ adapter: :active_record, rule: "user_queries", hit: false }])
+        end
+
+        it "marks the read as a hit when the cache has the result" do
+          cache.write(cache_key_for(sql), "cached_result")
+
+          expect(read_events).to eq([{ adapter: :active_record, rule: "user_queries", hit: true }])
+        end
+      end
+
       context "when TTL is zero or negative" do
         before { registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 0, ttl_jitter_seconds: 0) }
 
