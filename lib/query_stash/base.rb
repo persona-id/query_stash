@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "open3"
 require "active_support"
 require "active_support/cache"
 require "active_support/core_ext/object/blank"
@@ -137,24 +136,8 @@ module QueryStash
         end
 
         @valkey_cache_stats&.fetch("used_memory", nil)&.to_i
-      elsif cache_obj.is_a?(ActiveSupport::Cache::FileStore)
-        # Only update cache stats once every 30 seconds to avoid excessive STAT syscalls
-        if @file_cache_stats_last_updated_at.blank? || @file_cache_stats_last_updated_at < 30.seconds.ago
-          @file_cache_stats_last_updated_at = Time.current
-          @file_cache_stats = nil
-        end
-
-        @file_cache_stats ||= begin
-          o, e, s = Open3.capture3("du", cache_obj.cache_path, "-bs")
-
-          if s.success?
-            # ex: 128234328   path/to/dir
-            o.split(/\W+/).first.to_i
-          else
-            cache_obj.logger&.error(e)
-            0
-          end
-        end
+      elsif cache_obj.is_a?(QueryStash::FileStore)
+        cache_obj.usage_bytes
       else
         # WARNING: relies on internal ActiveSupport::Cache::MemoryStore API
         cache_obj.instance_variable_get(:@cache_size)

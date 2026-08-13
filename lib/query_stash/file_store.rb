@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "open3"
 require "active_support"
 require "active_support/cache"
 
@@ -14,6 +15,9 @@ module QueryStash
   # recorded as an exception on the surrounding cache instrumentation.
   class FileStore < ::ActiveSupport::Cache::FileStore
     EVICTOR_SLEEP_INTERVAL = 5 * 60
+    METRICS_SLEEP_INTERVAL = 30
+
+    attr_reader :usage_bytes
 
     def initialize(label, cache_path, lock_path:, **options)
       super(cache_path, **options)
@@ -38,9 +42,40 @@ module QueryStash
           ActiveSupport.error_reporter.report(e, handled: true)
         end
       end
+
+      @usage_bytes = fs_usage_bytes
+
+      @metrics_thread = Thread.start(self) do |_file_cache|
+        Thread.current.name = "#{label}-metrics"
+
+        loop do
+          # Only update cache stats once every 30 seconds to avoid excessive STAT syscalls
+          sleep METRICS_SLEEP_INTERVAL + rand
+
+          @usage_bytes = fs_usage_bytes
+        rescue Interrupt
+          break
+        rescue StandardError => e
+          logger&.error(e)
+        end
+      end
     end
 
     private
+
+    def fs_usage_bytes
+      return 0 unless Dir.exist?(cache_path)
+
+      o, e, s = Open3.capture3("du", cache_path, "-bs")
+
+      if s.success?
+        # ex: 128234328   path/to/dir
+        o.split(/\W+/).first.to_i
+      else
+        logger&.error(e)
+        0
+      end
+    end
 
     def write_serialized_entry(...)
       super
