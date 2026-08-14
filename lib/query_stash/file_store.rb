@@ -56,7 +56,7 @@ module QueryStash
         rescue Interrupt
           break
         rescue StandardError => e
-          logger&.error(e)
+          logger&.error("Error computing QueryStash::FileStore metrics: #{e.inspect}\n#{e.backtrace&.join("\n")}")
         end
       end
     end
@@ -72,7 +72,7 @@ module QueryStash
         # ex: 128234328   path/to/dir
         o.split(/\W+/).first.to_i
       else
-        logger&.error(e)
+        logger&.error(e) # e is stderr, not an exception
         0
       end
     end
