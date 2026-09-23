@@ -32,10 +32,10 @@ module QueryStash
     end
 
     module AdapterPatch
-      def internal_exec_query(sql, name = "SQL", binds = [], prepare: false, **kwargs)
+      def internal_exec_query(sql, name = "SQL", binds = [], ...)
         if QueryStash.state[:query_stash_active_record_enabled]
           QueryStash::ActiveRecord.wrap(sql, binds) do
-            super(sql, name, binds, prepare: prepare, **kwargs)
+            super(sql, name, binds, ...)
           end
         else
           super
