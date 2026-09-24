@@ -18,7 +18,8 @@ module QueryStash
         :on_cache_hit,
         :on_cache_miss,
         :on_cache_skip,
-        :enabled
+        :enabled,
+        :store
       )
 
       attr_reader :rules
@@ -35,7 +36,8 @@ module QueryStash
         on_cache_hit: nil,
         on_cache_miss: nil,
         on_cache_skip: nil,
-        enabled: nil
+        enabled: nil,
+        store: nil
       )
         raise "Rule name is required" if name.blank?
 
@@ -49,7 +51,8 @@ module QueryStash
           on_cache_hit: on_cache_hit,
           on_cache_miss: on_cache_miss,
           on_cache_skip: on_cache_skip,
-          enabled: enabled
+          enabled: enabled,
+          store: store
         )
       end
 
@@ -126,16 +129,23 @@ module QueryStash
       QueryStash::FileStore.new("query-stash-#{prefix}", cache_path, lock_path: lock_path)
     end
 
-    def cache_usage_bytes
-      cache_obj = cache
+    def cache_for(rule)
+      rule.store || cache
+    end
+
+    def cache_usage_bytes(rule = nil)
+      cache_obj = rule ? cache_for(rule) : cache
       if cache_obj.respond_to?(:redis)
+        @_redis_cache_stats ||= {}
+        updated_at, stats = @_redis_cache_stats[cache_obj]
         # Only update cache stats once every minute to avoid excessive Redis calls
-        if @valkey_cache_stats_last_updated_at.blank? || @valkey_cache_stats_last_updated_at < 1.minute.ago
-          @valkey_cache_stats_last_updated_at = Time.current
-          @valkey_cache_stats = cache_obj.stats
+        if updated_at.nil? || updated_at < 1.minute.ago
+          @_redis_cache_stats[cache_obj] = [Time.current, stats]
+          stats = cache_obj.stats
+          @_redis_cache_stats[cache_obj] = [Time.current, stats]
         end
 
-        @valkey_cache_stats&.fetch("used_memory", nil)&.to_i
+        stats&.fetch("used_memory", nil)&.to_i
       elsif cache_obj.is_a?(QueryStash::FileStore)
         cache_obj.usage_bytes
       else

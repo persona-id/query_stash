@@ -242,11 +242,29 @@ RSpec.describe QueryStash::Mongo do
       store.define_singleton_method(:redis) { :redis }
       store.define_singleton_method(:stats) { stats.dup }
       described_class.cache = store
-      described_class.instance_variable_set(:@valkey_cache_stats_last_updated_at, nil)
+      described_class.instance_variable_set(:@_redis_cache_stats, nil)
 
       expect(described_class.cache_usage_bytes).to eq(1024)
       stats["used_memory"] = 2048
       expect(described_class.cache_usage_bytes).to eq(1024)
+    end
+
+    it "tracks the once-a-minute Redis stats per store" do
+      stores = [1024, 4096].map do |used|
+        ActiveSupport::Cache::MemoryStore.new.tap do |store|
+          store.define_singleton_method(:redis) { :redis }
+          store.define_singleton_method(:stats) { { "used_memory" => used } }
+        end
+      end
+      described_class.cache = stores.first
+      described_class.instance_variable_set(:@_redis_cache_stats, nil)
+      routed = described_class.registry.class::Rule.new(
+        selector: {}, name: "routed", ttl_seconds: 60, ttl_jitter_seconds: 0,
+        on_cache_hit: nil, on_cache_miss: nil, on_cache_skip: nil, enabled: nil, store: stores.last
+      )
+
+      expect(described_class.cache_usage_bytes).to eq(1024)
+      expect(described_class.cache_usage_bytes(routed)).to eq(4096)
     end
     
     it "reports the size of a file store" do
@@ -384,6 +402,33 @@ RSpec.describe QueryStash::Mongo do
           cache.write(cache_key_for(view), "cached_result")
 
           expect(read_events).to eq([{ adapter: :mongo, rule: "accounts_by_token", hit: true }])
+        end
+      end
+
+      context "when the rule is routed to its own store" do
+        let(:routed_store) { ActiveSupport::Cache::MemoryStore.new }
+
+        before do
+          registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 60, ttl_jitter_seconds: 0,
+                                           store: routed_store)
+        end
+
+        it "reads and writes that store and leaves the default one alone" do
+          expect(described_class.wrap(view) { "yielded_result" }).to eq("yielded_result")
+
+          expect(routed_store.read(cache_key_for(view))).to eq("yielded_result")
+          expect(cache.instance_variable_get(:@data)).to be_empty
+          expect(described_class.wrap(view) { "different" }).to eq("yielded_result")
+        end
+
+        it "measures the rule's store in cache_usage_bytes" do
+          described_class.wrap(view) { "yielded_result" }
+          rule = registry.match_rule(
+            selector("accounts", { "token" => "acct_abc123" })
+          )
+
+          expect(described_class.cache_usage_bytes(rule)).to be_positive
+          expect(described_class.cache_usage_bytes).to eq(0)
         end
       end
 

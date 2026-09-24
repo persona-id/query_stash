@@ -240,7 +240,7 @@ RSpec.describe QueryStash::ActiveRecord do
       store.define_singleton_method(:redis) { :redis }
       store.define_singleton_method(:stats) { stats.dup }
       described_class.cache = store
-      described_class.instance_variable_set(:@valkey_cache_stats_last_updated_at, nil)
+      described_class.instance_variable_set(:@_redis_cache_stats, nil)
 
       expect(described_class.cache_usage_bytes).to eq(1024)
       stats["used_memory"] = 2048

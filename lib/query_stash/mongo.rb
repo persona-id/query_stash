@@ -98,7 +98,7 @@ module QueryStash
           adapter: :mongo,
           rule: rule.name
         ) do |payload|
-          value = cache.read(cache_key)
+          value = cache_for(rule).read(cache_key)
           payload[:hit] = !value.nil?
           value
         end
@@ -128,7 +128,7 @@ module QueryStash
 
         if ttl_seconds.positive?
           rule.on_cache_miss&.call(rule, result)
-          cache.write(cache_key, result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
+          cache_for(rule).write(cache_key, result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
         else
           rule.on_cache_skip&.call(rule, result)
         end
