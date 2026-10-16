@@ -36,12 +36,14 @@ RSpec.describe QueryStash::Mongo do
 
     describe "#add_rule" do
       it "adds rules with selector, name, and callbacks" do
-        registry.add_rule(selector("accounts", { "token" => QueryStash::Mongo::ANY }), name: "test_rule", ttl_seconds: 60, ttl_jitter_seconds: 0)
+        registry.add_rule(selector("accounts", { "token" => QueryStash::Mongo::ANY }),
+                          name: "test_rule", ttl_seconds: 60, ttl_jitter_seconds: 0)
         expect(registry.rules.length).to eq(1)
         expect(registry.rules.first.name).to eq("test_rule")
 
         callback = proc { |rule, result| }
-        registry.add_rule(selector("users", {}), name: "callback_rule", on_cache_hit: callback, ttl_seconds: 60, ttl_jitter_seconds: 0)
+        registry.add_rule(selector("users", {}), name: "callback_rule", on_cache_hit: callback,
+                                                 ttl_seconds: 60, ttl_jitter_seconds: 0)
         expect(registry.rules[1].on_cache_hit).to eq(callback)
 
         ttl_proc = proc { 60 }
@@ -88,10 +90,12 @@ RSpec.describe QueryStash::Mongo do
           selector("posts", { "status" => ->(value) { %w[draft published].include?(value) } }),
           name: "posts_by_status", ttl_seconds: 60, ttl_jitter_seconds: 0
         )
-        registry.add_rule(selector("tags", { "name" => /\Aruby/ }), name: "tags_by_name", ttl_seconds: 60, ttl_jitter_seconds: 0)
+        registry.add_rule(selector("tags", { "name" => /\Aruby/ }),
+                          name: "tags_by_name", ttl_seconds: 60, ttl_jitter_seconds: 0)
         registry.add_rule(selector("events", { "meta" => { "kind" => QueryStash::Mongo::ANY } }),
                           name: "events_by_kind", ttl_seconds: 60, ttl_jitter_seconds: 0)
-        registry.add_rule(selector("orders", { "ids" => [1] }), name: "orders_by_ids", ttl_seconds: 60, ttl_jitter_seconds: 0)
+        registry.add_rule(selector("orders", { "ids" => [1] }),
+                          name: "orders_by_ids", ttl_seconds: 60, ttl_jitter_seconds: 0)
 
         expect(registry.match_rule(selector("posts", { "status" => "published" })).name).to eq("posts_by_status")
         expect(registry.match_rule(selector("posts", { "status" => "archived" }))).to be_nil
@@ -118,7 +122,7 @@ RSpec.describe QueryStash::Mongo do
           @options = { limit: nil, skip: nil, sort: nil, projection: nil }
         end
 
-        def respond_to?(method, include_all = false)
+        def respond_to?(method, *)
           method == :pipeline ? false : super
         end
 
@@ -266,12 +270,12 @@ RSpec.describe QueryStash::Mongo do
       expect(described_class.cache_usage_bytes).to eq(1024)
       expect(described_class.cache_usage_bytes(routed)).to eq(4096)
     end
-    
+
     it "reports the size of a file store" do
       Dir.mktmpdir do |dir|
         described_class.cache = described_class.file_store(File.join(dir, "cache"), lock_path: File.join(dir, "lock"))
         described_class.instance_variable_set(:@file_cache_stats_last_updated_at, nil)
-    
+
         expect(described_class.cache).to be_a(ActiveSupport::Cache::FileStore)
         expect(described_class.cache_usage_bytes).to be_a(Integer)
       end

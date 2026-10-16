@@ -56,7 +56,8 @@ RSpec.describe QueryStash::FileStore do
 
     context "when the cache directory has not been created yet" do
       let(:store) do
-        described_class.new("dummy-label", File.join(cache_path, "not-created-yet"), lock_path: File.join(cache_path, "lock"))
+        described_class.new("dummy-label", File.join(cache_path, "not-created-yet"),
+                            lock_path: File.join(cache_path, "lock"))
       end
 
       before do

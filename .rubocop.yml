@@ -1,8 +1,32 @@
 AllCops:
   TargetRubyVersion: 3.2
+  NewCops: enable
+  SuggestExtensions: false
 
 Style/StringLiterals:
   EnforcedStyle: double_quotes
 
 Style/StringLiteralsInInterpolation:
   EnforcedStyle: double_quotes
+
+Metrics:
+  Enabled: false
+
+Style/Documentation:
+  Enabled: false
+
+# `@_registry` and friends keep memoized state apart from public accessors.
+Naming/MemoizedInstanceVariableName:
+  Enabled: false
+
+# Adapters `include QueryStash::Base` and `extend self` so the same methods serve
+# both the module and anything that includes it.
+Style/ModuleFunction:
+  Enabled: false
+
+# Anonymous block/argument forwarding is a SyntaxError inside blocks on Ruby 3.3+.
+Naming/BlockForwarding:
+  Enabled: false
+
+Style/ArgumentsForwarding:
+  Enabled: false

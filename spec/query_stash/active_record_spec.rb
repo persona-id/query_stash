@@ -22,7 +22,8 @@ RSpec.describe QueryStash::ActiveRecord do
         expect(registry.rules.first.enabled).to eq(enabled)
 
         callback = proc { |rule, result| }
-        registry.add_rule(/UPDATE/, name: "callback_rule", on_cache_hit: callback, ttl_seconds: 60, ttl_jitter_seconds: 0)
+        registry.add_rule(/UPDATE/, name: "callback_rule", on_cache_hit: callback,
+                                    ttl_seconds: 60, ttl_jitter_seconds: 0)
         expect(registry.rules[1].on_cache_hit).to eq(callback)
 
         ttl_proc = proc { 60 }
@@ -67,7 +68,7 @@ RSpec.describe QueryStash::ActiveRecord do
   describe QueryStash::ActiveRecord::AdapterPatch do
     let(:adapter) do
       Class.new do
-        def internal_exec_query(_sql, _name = "SQL", _binds = [], prepare: false, **_kwargs)
+        def internal_exec_query(_sql, _name = "SQL", _binds = [], **)
           "original_result"
         end
       end.prepend(described_class).new
@@ -142,7 +143,7 @@ RSpec.describe QueryStash::ActiveRecord do
           @db_call_count = 0
         end
 
-        def internal_exec_query(_sql, _name = "SQL", _binds = [], prepare: false, **_kwargs)
+        def internal_exec_query(_sql, _name = "SQL", _binds = [], **)
           @db_call_count += 1
           "db_result"
         end
@@ -246,12 +247,12 @@ RSpec.describe QueryStash::ActiveRecord do
       stats["used_memory"] = 2048
       expect(described_class.cache_usage_bytes).to eq(1024)
     end
-    
+
     it "reports the size of a file store" do
       Dir.mktmpdir do |dir|
         described_class.cache = described_class.file_store(File.join(dir, "cache"), lock_path: File.join(dir, "lock"))
         described_class.instance_variable_set(:@file_cache_stats_last_updated_at, nil)
-    
+
         expect(described_class.cache).to be_a(ActiveSupport::Cache::FileStore)
         expect(described_class.cache_usage_bytes).to be_a(Integer)
       end
@@ -313,7 +314,8 @@ RSpec.describe QueryStash::ActiveRecord do
 
         before do
           state = flag
-          registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 60, ttl_jitter_seconds: 0, enabled: -> { state[:on] })
+          registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 60, ttl_jitter_seconds: 0,
+                                             enabled: -> { state[:on] })
         end
 
         it "yields without caching while it returns false" do
