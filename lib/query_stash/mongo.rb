@@ -91,6 +91,7 @@ module QueryStash
       return yield(cacheable: false) unless rule
 
       cache_key = cache_key_for(view.database.name, selector)
+      cache_obj = cache_for(rule)
 
       rescue_cache_error do
         cached_result = ActiveSupport::Notifications.instrument(
@@ -98,7 +99,7 @@ module QueryStash
           adapter: :mongo,
           rule: rule.name
         ) do |payload|
-          value = cache_for(rule).read(cache_key)
+          value = cache_obj.read(cache_key)
           payload[:hit] = !value.nil?
           value
         end
@@ -128,7 +129,7 @@ module QueryStash
 
         if ttl_seconds.positive?
           rule.on_cache_miss&.call(rule, result)
-          cache_for(rule).write(cache_key, result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
+          cache_obj.write(cache_key, result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
         else
           rule.on_cache_skip&.call(rule, result)
         end

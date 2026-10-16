@@ -61,6 +61,7 @@ module QueryStash
       return yield unless rule.enabled.nil? || rule.enabled.call
 
       cache_key = cache_key_for(sql)
+      cache_obj = cache
 
       rescue_cache_error do
         cached_result = ActiveSupport::Notifications.instrument(
@@ -68,7 +69,7 @@ module QueryStash
           adapter: :active_record,
           rule: rule.name
         ) do |payload|
-          value = cache.read(cache_key)
+          value = cache_obj.read(cache_key)
           payload[:hit] = !value.nil?
           value
         end
@@ -99,7 +100,7 @@ module QueryStash
 
         if ttl_seconds.positive?
           rule.on_cache_miss&.call(rule, result)
-          cache.write(cache_key, result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
+          cache_obj.write(cache_key, result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
         else
           rule.on_cache_skip&.call(rule, result)
         end

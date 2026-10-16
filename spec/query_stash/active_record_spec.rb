@@ -414,6 +414,23 @@ RSpec.describe QueryStash::ActiveRecord do
         end
       end
 
+      context "when the store changes between the read and the write" do
+        let(:first_store) { ActiveSupport::Cache::MemoryStore.new }
+        let(:second_store) { ActiveSupport::Cache::MemoryStore.new }
+
+        before do
+          registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 60, ttl_jitter_seconds: 0)
+          allow(described_class).to receive(:cache).and_return(first_store, second_store)
+        end
+
+        it "reads and writes the store it picked once" do
+          described_class.wrap(sql, []) { "yielded_result" }
+
+          expect(first_store.read(cache_key_for(sql))).to eq("yielded_result")
+          expect(second_store.read(cache_key_for(sql))).to be_nil
+        end
+      end
+
       context "when TTL is zero or negative" do
         before { registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 0, ttl_jitter_seconds: 0) }
 
