@@ -1,0 +1,13 @@
+# frozen_string_literal: true
+
+source "https://rubygems.org"
+
+gemspec path: ".."
+
+gem "activerecord", "~> 8.0.0"
+gem "activesupport", "~> 8.0.0"
+gem "mongo", "~> 2.19.0"
+gem "rack"
+gem "rake", "~> 13.0"
+gem "rspec", "~> 3.0"
+gem "sqlite3"

@@ -11,13 +11,23 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
-    name: Ruby ${{ matrix.ruby }}
+    name: Ruby ${{ matrix.ruby }} / ${{ matrix.gemfile }}
     strategy:
+      fail-fast: false
       matrix:
         ruby:
-          - '4.0.6'
+          - '3.2'
+          - '3.3'
+          - '3.4'
+          - '4.0'
+        gemfile:
+          - Gemfile
+          - gemfiles/activerecord_7_2.gemfile
+          - gemfiles/activerecord_8_0.gemfile
+    env:
+      BUNDLE_GEMFILE: ${{ github.workspace }}/${{ matrix.gemfile }}
 
     steps:
       - uses: actions/checkout@v6
@@ -28,5 +38,21 @@ jobs:
         with:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
-      - name: Run the default task
-        run: bundle exec rake
+      - name: Run the specs
+        run: bundle exec rspec
+
+  lint:
+    runs-on: ubuntu-latest
+    name: RuboCop
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '4.0.6'
+          bundler-cache: true
+      - name: Run RuboCop
+        run: bundle exec rubocop
