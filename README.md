@@ -61,7 +61,7 @@ require "query_stash/mongo"
 require "query_stash/rack"
 ```
 
-ActiveRecord 7.2, 8.0 and 8.1 and Ruby 3.2 through 4.0 are tested in CI.
+ActiveRecord 7.2, 8.0 and 8.1 and Ruby 3.3 through 4.0 are tested in CI.
 The Mongo adapter targets the 2.19 driver.
 
 ## Usage
