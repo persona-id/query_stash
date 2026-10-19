@@ -4,6 +4,7 @@ module QueryStash
   class Railtie < Rails::Railtie
     config.before_configuration do
       config.query_stash = ActiveSupport::OrderedOptions.new.update(
+        enabled: true,
         raise_on_cache_error: Rails.env.development? || Rails.env.test?
       )
     end

@@ -24,6 +24,18 @@ RSpec.describe QueryStash::Railtie do
 
         expect(request.get("/posts/#{post.id}").body).to eq("Before")
       end
+
+      it "does not stash while config.query_stash.enabled is false" do
+        Rails.application.config.query_stash.enabled = false
+        post = Post.create!(title: "Before")
+
+        expect(request.get("/posts/#{post.id}").body).to eq("Before")
+        post.update!(title: "After")
+
+        expect(request.get("/posts/#{post.id}").body).to eq("After")
+      ensure
+        Rails.application.config.query_stash.enabled = true
+      end
     end
 
     context "with Mongo", database: :mongo do

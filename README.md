@@ -207,6 +207,17 @@ A stash hit never reaches the adapter, so it fires no `sql.active_record`
 event. Subscribe to `cache_hit.query_stash` if you count queries per
 request.
 
+### Turning it off
+
+`config.query_stash.enabled` (true by default) is the value
+`with_query_stash`, and so the middlewares, turn the stash on with. Set it to
+false to keep the stash off everywhere without removing any call sites:
+
+```ruby
+# config/environments/development.rb
+config.query_stash.enabled = false
+```
+
 ### Errors
 
 Cache errors never fail the query: the read falls back to the database and

@@ -110,6 +110,16 @@ RSpec.describe QueryStash::ActiveRecord do
 
         expect(QueryStash.state[:query_stash_active_record_enabled]).to be_nil
       end
+
+      it "leaves the stash off while config.query_stash.enabled is false" do
+        Rails.application.config.query_stash.enabled = false
+
+        ActiveRecord::Base.with_query_stash do
+          expect(QueryStash.state[:query_stash_active_record_enabled]).to be(false)
+        end
+      ensure
+        Rails.application.config.query_stash.enabled = true
+      end
     end
 
     describe "#without_query_stash" do

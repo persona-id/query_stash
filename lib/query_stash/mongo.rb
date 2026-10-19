@@ -30,7 +30,7 @@ module QueryStash
 
     module ContextMethods
       def with_query_stash(&block)
-        QueryStash.state.wrap(query_stash_mongo_enabled: true, &block)
+        QueryStash.state.wrap(query_stash_mongo_enabled: Rails.application.config.query_stash.enabled, &block)
       end
 
       def without_query_stash(&block)
