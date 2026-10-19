@@ -68,14 +68,11 @@ Nothing is stashed outside an enabled block. For requests, the railtie adds
 `QueryStash::ActiveRecord::Middleware` and `QueryStash::Mongo::Middleware`
 to the app's middleware stack, one for each framework your app uses.
 
-Wrap jobs however your job system allows:
+For ActiveJob, the railtie wraps every job's `perform` in `with_query_stash`
+the same way. Wrap jobs from other job systems however they allow:
 
 ```ruby
-class ApplicationJob < ActiveJob::Base
-  around_perform do |_job, block|
-    ActiveRecord::Base.with_query_stash { Mongo.with_query_stash(&block) }
-  end
-end
+ActiveRecord::Base.with_query_stash { Mongo.with_query_stash { run_job } }
 ```
 
 Opt out where reads must see their own writes:
@@ -188,12 +185,12 @@ MemoryStore's size).
 
 The enabled flags live in `ActiveSupport::IsolatedExecutionState`, so
 threads spawned inside an enabled block do not inherit them, and queries in
-those threads bypass the stash. If your app already propagates a context
-object into child threads, point QueryStash at it. Any object with `[]` and
-`wrap(**values, &block)` works:
+those threads bypass the stash. Enable it inside the thread instead:
 
 ```ruby
-QueryStash.state = MyApp::CurrentContext
+Thread.new do
+  ActiveRecord::Base.with_query_stash { Organization.find(id) }
+end
 ```
 
 ### Instrumentation

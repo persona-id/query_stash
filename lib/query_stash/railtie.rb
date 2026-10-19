@@ -25,6 +25,16 @@ module QueryStash
       end
     end
 
+    initializer "query_stash.active_job" do
+      ActiveSupport.on_load(:active_job) do
+        if defined?(::ActiveRecord::Railtie)
+          around_perform { |_job, block| ::ActiveRecord::Base.with_query_stash(&block) }
+        end
+
+        around_perform { |_job, block| ::Mongo.with_query_stash(&block) } if defined?(::Rails::Mongoid::Railtie)
+      end
+    end
+
     config.to_prepare do |_app|
       ActiveSupport.on_load(:active_record) do
         require_relative "active_record"

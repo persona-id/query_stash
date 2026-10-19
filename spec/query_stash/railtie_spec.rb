@@ -56,4 +56,38 @@ RSpec.describe QueryStash::Railtie do
       end
     end
   end
+
+  describe "ActiveJob" do
+    it "enables the stash for both adapters while a job runs and restores it afterwards" do
+      expect(StashStateJob.perform_now).to eq([true, true])
+      expect(QueryStash::IsolatedState[:query_stash_active_record_enabled]).to be_nil
+      expect(QueryStash::IsolatedState[:query_stash_mongo_enabled]).to be_nil
+    end
+
+    it "leaves the stash off while config.query_stash.enabled is false" do
+      Rails.application.config.query_stash.enabled = false
+
+      expect(StashStateJob.perform_now).to eq([false, false])
+    ensure
+      Rails.application.config.query_stash.enabled = true
+    end
+
+    context "with ActiveRecord", database: :active_record do
+      before do
+        QueryStash::ActiveRecord.cache.clear
+        QueryStash::ActiveRecord.registry.instance_variable_set(:@rules, [])
+        QueryStash::ActiveRecord.registry.add_rule(/\ASELECT .*posts/, name: "posts", ttl_seconds: 60,
+                                                                       ttl_jitter_seconds: 0)
+      end
+
+      it "serves the next job's lookup from the stash" do
+        post = Post.create!(title: "Before")
+
+        expect(PostTitleJob.perform_now(post.id)).to eq("Before")
+        post.update!(title: "After")
+
+        expect(PostTitleJob.perform_now(post.id)).to eq("Before")
+      end
+    end
+  end
 end

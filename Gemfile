@@ -12,6 +12,7 @@ gem "rspec", "~> 3.0"
 
 gem "rubocop", "~> 1.21"
 
+gem "activejob", ">= 7.2"
 gem "activerecord", ">= 7.2"
 gem "railties", ">= 7.2"
 
