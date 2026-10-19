@@ -48,6 +48,7 @@ jobs:
           - Gemfile
           - gemfiles/activerecord_7_2.gemfile
           - gemfiles/activerecord_8_0.gemfile
+          - gemfiles/activerecord_8_1.gemfile
         db:
           - sqlite3
           - postgresql
