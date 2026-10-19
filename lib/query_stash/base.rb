@@ -1,11 +1,6 @@
 # frozen_string_literal: true
 
-require "active_support"
-require "active_support/cache"
-require "active_support/core_ext/object/blank"
-require "active_support/core_ext/numeric/time"
-require "query_stash"
-require "query_stash/file_store"
+require_relative "file_store"
 
 module QueryStash
   module Base

@@ -30,12 +30,15 @@ module QueryStash
 
         extend QueryStash::ActiveRecord::ContextMethods
 
-        # This pattern is stolen from the database_rewinder gem
-        ::ActiveRecord::ConnectionAdapters::AbstractAdapter.descendants.each do |adapter|
-          # In order not to avoid touching AbstractMysqlAdapter
-          next if adapter.descendants.any?
-
-          adapter.prepend(QueryStash::ActiveRecord::AdapterPatch)
+        %i[
+          active_record_sqlite3adapter
+          active_record_postgresqladapter
+          active_record_mysql2adapter
+          active_record_trilogyadapter
+        ].each do |hook|
+          ActiveSupport.on_load(hook) do
+            prepend QueryStash::ActiveRecord::AdapterPatch
+          end
         end
       end
 
