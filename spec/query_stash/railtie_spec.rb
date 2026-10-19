@@ -1,31 +1,11 @@
 # frozen_string_literal: true
 
-RSpec.describe QueryStash::Rack::Middleware do
-  describe "#call" do
-    it "enables the stash for both adapters during the request and restores it afterwards" do
-      seen = nil
-      app = lambda do |_env|
-        seen = [
-          QueryStash.state[:query_stash_active_record_enabled],
-          QueryStash.state[:query_stash_mongo_enabled]
-        ]
-        [200, {}, ["ok"]]
-      end
-
-      response = described_class.new(app).call({})
-
-      expect(response).to eq([200, {}, ["ok"]])
-      expect(seen).to eq([true, true])
-      expect(QueryStash.state[:query_stash_active_record_enabled]).to be_nil
-      expect(QueryStash.state[:query_stash_mongo_enabled]).to be_nil
-    end
-  end
-
-  describe "in the dummy app's middleware stack" do
+RSpec.describe QueryStash::Railtie do
+  describe "middleware" do
     let(:request) { Rack::MockRequest.new(Rails.application) }
 
-    it "is installed" do
-      expect(Rails.application.middleware).to include(described_class)
+    it "adds the ActiveRecord and Mongo middlewares to the app" do
+      expect(Rails.application.middleware).to include(QueryStash::ActiveRecord::Middleware, QueryStash::Mongo::Middleware)
     end
 
     context "with ActiveRecord", database: :active_record do

@@ -211,6 +211,20 @@ RSpec.describe QueryStash::Mongo do
     end
   end
 
+  describe QueryStash::Mongo::Middleware do
+    it "enables the stash during the request and restores it afterwards" do
+      seen = nil
+      app = lambda do |_env|
+        seen = QueryStash.state[:query_stash_mongo_enabled]
+        [200, {}, ["ok"]]
+      end
+
+      expect(described_class.new(app).call({})).to eq([200, {}, ["ok"]])
+      expect(seen).to be(true)
+      expect(QueryStash.state[:query_stash_mongo_enabled]).to be_nil
+    end
+  end
+
   describe ".cache" do
     it "returns a memoized ActiveSupport::Cache::MemoryStore instance" do
       expect(described_class.cache).to be_a(ActiveSupport::Cache::MemoryStore)

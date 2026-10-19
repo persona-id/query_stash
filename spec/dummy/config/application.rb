@@ -5,7 +5,6 @@ require "active_record/railtie"
 require "action_controller/railtie"
 require "mongoid"
 require "query_stash"
-require "query_stash/rack"
 
 # The engine under test comes from DATABASE_URL, e.g.:
 #
@@ -27,8 +26,6 @@ module Dummy
     config.eager_load = true
     config.logger = Logger.new(nil)
     config.secret_key_base = "query-stash-dummy"
-
-    config.middleware.use QueryStash::Rack::Middleware
   end
 
   def self.database

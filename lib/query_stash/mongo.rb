@@ -38,6 +38,17 @@ module QueryStash
       end
     end
 
+    # Enables the stash for the duration of each request.
+    class Middleware
+      def initialize(app)
+        @app = app
+      end
+
+      def call(env)
+        ::Mongo.with_query_stash { @app.call(env) }
+      end
+    end
+
     module AdapterPatch
       def each
         if QueryStash.state[:query_stash_mongo_enabled]

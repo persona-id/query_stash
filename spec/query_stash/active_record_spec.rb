@@ -131,6 +131,20 @@ RSpec.describe QueryStash::ActiveRecord do
     end
   end
 
+  describe QueryStash::ActiveRecord::Middleware do
+    it "enables the stash during the request and restores it afterwards" do
+      seen = nil
+      app = lambda do |_env|
+        seen = QueryStash.state[:query_stash_active_record_enabled]
+        [200, {}, ["ok"]]
+      end
+
+      expect(described_class.new(app).call({})).to eq([200, {}, ["ok"]])
+      expect(seen).to be(true)
+      expect(QueryStash.state[:query_stash_active_record_enabled]).to be_nil
+    end
+  end
+
   describe "the stash across spawned threads" do
     # Fake adapter that counts how many times it actually hits the "database"
     # (i.e. the underlying internal_exec_query without caching).

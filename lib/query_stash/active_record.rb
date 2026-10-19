@@ -30,6 +30,17 @@ module QueryStash
       end
     end
 
+    # Enables the stash for the duration of each request.
+    class Middleware
+      def initialize(app)
+        @app = app
+      end
+
+      def call(env)
+        ::ActiveRecord::Base.with_query_stash { @app.call(env) }
+      end
+    end
+
     module AdapterPatch
       def internal_exec_query(sql, name = "SQL", binds = [], ...)
         if QueryStash.state[:query_stash_active_record_enabled]

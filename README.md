@@ -53,13 +53,8 @@ Know what it does not do:
 bundle add query_stash
 ```
 
-Require the adapters you use. Each one is optional:
-
-```ruby
-require "query_stash/active_record"
-require "query_stash/mongo"
-require "query_stash/rack"
-```
+The railtie loads the adapter for each framework your app uses, ActiveRecord
+and Mongoid, when that framework loads.
 
 ActiveRecord 7.2, 8.0 and 8.1 and Ruby 3.3 through 4.0 are tested in CI,
 against SQLite, PostgreSQL, MySQL and MongoDB (through Mongoid). The Mongo
@@ -69,15 +64,11 @@ adapter targets the 2.19 driver.
 
 ### Turn it on per request and per job
 
-Nothing is stashed outside an enabled block. Add the middleware for
-requests:
+Nothing is stashed outside an enabled block. For requests, the railtie adds
+`QueryStash::ActiveRecord::Middleware` and `QueryStash::Mongo::Middleware`
+to the app's middleware stack, one for each framework your app uses.
 
-```ruby
-# config/application.rb
-config.middleware.use QueryStash::Rack::Middleware
-```
-
-And wrap jobs however your job system allows:
+Wrap jobs however your job system allows:
 
 ```ruby
 class ApplicationJob < ActiveJob::Base

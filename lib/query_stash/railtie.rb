@@ -8,6 +8,22 @@ module QueryStash
       )
     end
 
+    # The middleware stack is built before ActiveRecord::Base and Mongoid::Document load, so the
+    # middlewares can't be added from their on_load hooks: they go in whenever the framework is present.
+    initializer "query_stash.middleware" do |app|
+      if defined?(::ActiveRecord::Railtie)
+        require_relative "active_record"
+
+        app.config.middleware.use QueryStash::ActiveRecord::Middleware
+      end
+
+      if defined?(::Rails::Mongoid::Railtie)
+        require_relative "mongo"
+
+        app.config.middleware.use QueryStash::Mongo::Middleware
+      end
+    end
+
     config.to_prepare do |_app|
       ActiveSupport.on_load(:active_record) do
         require_relative "active_record"
