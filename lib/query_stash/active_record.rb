@@ -22,11 +22,13 @@ module QueryStash
 
     module ContextMethods
       def with_query_stash(&block)
-        QueryStash.state.wrap(query_stash_active_record_enabled: Rails.application.config.query_stash.enabled, &block)
+        QueryStash::IsolatedState.wrap(
+          query_stash_active_record_enabled: Rails.application.config.query_stash.enabled, &block
+        )
       end
 
       def without_query_stash(&block)
-        QueryStash.state.wrap(query_stash_active_record_enabled: false, &block)
+        QueryStash::IsolatedState.wrap(query_stash_active_record_enabled: false, &block)
       end
     end
 
@@ -43,7 +45,7 @@ module QueryStash
 
     module AdapterPatch
       def internal_exec_query(sql, name = "SQL", binds = [], ...)
-        if QueryStash.state[:query_stash_active_record_enabled]
+        if QueryStash::IsolatedState[:query_stash_active_record_enabled]
           QueryStash::ActiveRecord.wrap(sql, binds) do
             super(sql, name, binds, ...)
           end

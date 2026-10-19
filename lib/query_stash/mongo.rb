@@ -30,11 +30,11 @@ module QueryStash
 
     module ContextMethods
       def with_query_stash(&block)
-        QueryStash.state.wrap(query_stash_mongo_enabled: Rails.application.config.query_stash.enabled, &block)
+        QueryStash::IsolatedState.wrap(query_stash_mongo_enabled: Rails.application.config.query_stash.enabled, &block)
       end
 
       def without_query_stash(&block)
-        QueryStash.state.wrap(query_stash_mongo_enabled: false, &block)
+        QueryStash::IsolatedState.wrap(query_stash_mongo_enabled: false, &block)
       end
     end
 
@@ -51,7 +51,7 @@ module QueryStash
 
     module AdapterPatch
       def each
-        if QueryStash.state[:query_stash_mongo_enabled]
+        if QueryStash::IsolatedState[:query_stash_mongo_enabled]
           result = QueryStash::Mongo.wrap(self) do |cacheable:|
             # Avoid eager loading the entire result set unless this query actually
             # matches a cache rule. This can cause very quick OOMs
