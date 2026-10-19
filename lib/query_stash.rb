@@ -3,6 +3,7 @@
 require "active_support"
 require "active_support/isolated_execution_state"
 require_relative "query_stash/version"
+require_relative "query_stash/railtie" if defined?(Rails::Railtie)
 
 module QueryStash
   class Error < StandardError; end
@@ -27,7 +28,6 @@ module QueryStash
   end
 
   class << self
-    attr_accessor :raise_errors
     attr_writer :state
 
     def state

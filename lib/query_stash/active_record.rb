@@ -1,8 +1,7 @@
 # frozen_string_literal: true
 
 require "digest"
-require "active_record"
-require "query_stash/base"
+require_relative "base"
 
 module QueryStash
   module ActiveRecord
@@ -118,17 +117,5 @@ module QueryStash
       # this module is prepended.
       "v1:#{::ActiveRecord::Base.current_shard}:#{Digest::SHA256.hexdigest(sql)}"
     end
-  end
-end
-
-ActiveSupport.on_load(:active_record) do
-  extend QueryStash::ActiveRecord::ContextMethods
-
-  # This pattern is stolen from the database_rewinder gem
-  ActiveRecord::ConnectionAdapters::AbstractAdapter.descendants.each do |adapter|
-    # In order not to avoid touching AbstractMysqlAdapter
-    next if adapter.descendants.any?
-
-    adapter.prepend(QueryStash::ActiveRecord::AdapterPatch)
   end
 end

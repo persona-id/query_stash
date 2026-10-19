@@ -2,7 +2,6 @@
 
 require "tmpdir"
 require "active_support/testing/time_helpers"
-require "query_stash/active_record"
 
 RSpec.describe QueryStash::ActiveRecord do
   def cache_key_for(sql)
@@ -256,6 +255,37 @@ RSpec.describe QueryStash::ActiveRecord do
         expect(described_class.cache).to be_a(ActiveSupport::Cache::FileStore)
         expect(described_class.cache_usage_bytes).to be_a(Integer)
       end
+    end
+  end
+
+  describe "cache errors" do
+    let(:sql) { "SELECT * FROM users WHERE id = 1" }
+    let(:config) { Rails.application.config.query_stash }
+
+    before do
+      described_class.registry.instance_variable_set(:@rules, [])
+      described_class.registry.add_rule(/SELECT/, name: "test", ttl_seconds: 60, ttl_jitter_seconds: 0)
+
+      failing_store = ActiveSupport::Cache::MemoryStore.new
+      failing_store.define_singleton_method(:read) { |*| raise IOError, "cache is down" }
+      described_class.cache = failing_store
+    end
+
+    after { described_class.cache = nil }
+
+    it "raises them in the test environment" do
+      expect(config.raise_on_cache_error).to be(true)
+      expect { described_class.wrap(sql, []) { "db_result" } }.to raise_error(IOError, "cache is down")
+    end
+
+    it "reports them and falls back to the database when raise_on_cache_error is off" do
+      config.raise_on_cache_error = false
+      allow(ActiveSupport.error_reporter).to receive(:report)
+
+      expect(described_class.wrap(sql, []) { "db_result" }).to eq("db_result")
+      expect(ActiveSupport.error_reporter).to have_received(:report).with(an_instance_of(IOError), handled: true)
+    ensure
+      config.raise_on_cache_error = true
     end
   end
 

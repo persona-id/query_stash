@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
 require "digest"
-require "mongo"
-require "active_support/core_ext/object/json"
 require "query_stash/base"
 
 module QueryStash
@@ -157,9 +155,3 @@ module QueryStash
     end
   end
 end
-
-Mongo.extend(QueryStash::Mongo::ContextMethods)
-
-Mongo::Collection::View::Iterable.prepend(
-  QueryStash::Mongo::AdapterPatch
-)

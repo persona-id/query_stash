@@ -218,8 +218,9 @@ request.
 ### Errors
 
 Cache errors never fail the query: the read falls back to the database and
-a failed write is dropped. Errors go to `ActiveSupport.error_reporter`. Set
-`QueryStash.raise_errors = true` in development and test to see them.
+a failed write is dropped. Errors go to `ActiveSupport.error_reporter`,
+except in development and test, where they are raised. Set
+`config.query_stash.raise_on_cache_error` to change that.
 
 ## Why this repo has history from before it existed
 
@@ -340,6 +341,19 @@ bin/setup
 bundle exec rake      # specs + RuboCop
 BUNDLE_GEMFILE=gemfiles/activerecord_7_2.gemfile bundle exec rspec
 ```
+
+The specs boot a Rails app in `spec/dummy`. It uses an in-memory SQLite
+database unless `DATABASE_URL` points somewhere else. The database is
+created if it doesn't exist:
+
+```sh
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/query_stash_test bundle exec rspec
+DATABASE_URL=trilogy://root:mysql@127.0.0.1:3306/query_stash_test bundle exec rspec
+DATABASE_URL=mongodb://127.0.0.1:27017/query_stash_test bundle exec rspec
+```
+
+Examples tagged `database: :active_record` or `database: :mongo` only run
+against that kind of database.
 
 ## License
 

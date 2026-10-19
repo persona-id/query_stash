@@ -2,7 +2,6 @@
 
 require "tmpdir"
 require "active_support/testing/time_helpers"
-require "query_stash/mongo"
 
 RSpec.describe QueryStash::Mongo do
   def selector(collection_name, filter)

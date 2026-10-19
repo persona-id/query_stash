@@ -169,7 +169,7 @@ module QueryStash
       # cleanup making files disappear.
       nil
     rescue StandardError => e
-      raise e if QueryStash.raise_errors
+      raise e if Rails.application.config.query_stash.raise_on_cache_error
 
       ActiveSupport.error_reporter.report(e, handled: true)
     end
