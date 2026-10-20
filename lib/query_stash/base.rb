@@ -1,11 +1,6 @@
 # frozen_string_literal: true
 
-require "active_support"
-require "active_support/cache"
-require "active_support/core_ext/object/blank"
-require "active_support/core_ext/numeric/time"
-require "query_stash"
-require "query_stash/file_store"
+require_relative "file_store"
 
 module QueryStash
   module Base
@@ -169,7 +164,7 @@ module QueryStash
       # cleanup making files disappear.
       nil
     rescue StandardError => e
-      raise e if QueryStash.raise_errors
+      raise e if Rails.application.config.query_stash.raise_on_cache_error
 
       ActiveSupport.error_reporter.report(e, handled: true)
     end

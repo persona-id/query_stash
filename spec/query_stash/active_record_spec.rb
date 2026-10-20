@@ -2,7 +2,6 @@
 
 require "tmpdir"
 require "active_support/testing/time_helpers"
-require "query_stash/active_record"
 
 RSpec.describe QueryStash::ActiveRecord do
   def cache_key_for(sql)
@@ -103,13 +102,23 @@ RSpec.describe QueryStash::ActiveRecord do
   describe QueryStash::ActiveRecord::ContextMethods do
     describe "#with_query_stash" do
       it "enables the stash" do
-        expect(QueryStash.state[:query_stash_active_record_enabled]).to be_nil
+        expect(QueryStash::IsolatedState[:query_stash_active_record_enabled]).to be_nil
 
         ActiveRecord::Base.with_query_stash do
-          expect(QueryStash.state[:query_stash_active_record_enabled]).to be(true)
+          expect(QueryStash::IsolatedState[:query_stash_active_record_enabled]).to be(true)
         end
 
-        expect(QueryStash.state[:query_stash_active_record_enabled]).to be_nil
+        expect(QueryStash::IsolatedState[:query_stash_active_record_enabled]).to be_nil
+      end
+
+      it "leaves the stash off while config.query_stash.enabled is false" do
+        Rails.application.config.query_stash.enabled = false
+
+        ActiveRecord::Base.with_query_stash do
+          expect(QueryStash::IsolatedState[:query_stash_active_record_enabled]).to be(false)
+        end
+      ensure
+        Rails.application.config.query_stash.enabled = true
       end
     end
 
@@ -121,14 +130,28 @@ RSpec.describe QueryStash::ActiveRecord do
       end
 
       it "disables the stash" do
-        expect(QueryStash.state[:query_stash_active_record_enabled]).to be(true)
+        expect(QueryStash::IsolatedState[:query_stash_active_record_enabled]).to be(true)
 
         ActiveRecord::Base.without_query_stash do
-          expect(QueryStash.state[:query_stash_active_record_enabled]).to be(false)
+          expect(QueryStash::IsolatedState[:query_stash_active_record_enabled]).to be(false)
         end
 
-        expect(QueryStash.state[:query_stash_active_record_enabled]).to be(true)
+        expect(QueryStash::IsolatedState[:query_stash_active_record_enabled]).to be(true)
       end
+    end
+  end
+
+  describe QueryStash::ActiveRecord::Middleware do
+    it "enables the stash during the request and restores it afterwards" do
+      seen = nil
+      app = lambda do |_env|
+        seen = QueryStash::IsolatedState[:query_stash_active_record_enabled]
+        [200, {}, ["ok"]]
+      end
+
+      expect(described_class.new(app).call({})).to eq([200, {}, ["ok"]])
+      expect(seen).to be(true)
+      expect(QueryStash::IsolatedState[:query_stash_active_record_enabled]).to be_nil
     end
   end
 
@@ -150,27 +173,6 @@ RSpec.describe QueryStash::ActiveRecord do
       end.prepend(QueryStash::ActiveRecord::AdapterPatch).new
     end
 
-    # Stands in for an application context that child threads inherit.
-    let(:inherited_state) do
-      Class.new do
-        def initialize
-          @values = {}
-        end
-
-        def [](key)
-          @values[key]
-        end
-
-        def wrap(**values)
-          previous = @values.dup
-          @values.merge!(values)
-          yield
-        ensure
-          @values = previous
-        end
-      end.new
-    end
-
     let(:sql) { "SELECT * FROM organizations WHERE organizations.id = 1" }
 
     before do
@@ -180,28 +182,26 @@ RSpec.describe QueryStash::ActiveRecord do
                                                                  ttl_jitter_seconds: 0)
     end
 
-    after { QueryStash.state = nil }
-
-    def query_in_parent_then_spawned_thread
+    def query_in_parent_then_spawned_thread(&thread_body)
       ActiveRecord::Base.with_query_stash do
         fake_adapter.internal_exec_query(sql)
         fake_adapter.internal_exec_query(sql)
         expect(fake_adapter.db_call_count).to eq(1)
 
-        Thread.new { fake_adapter.internal_exec_query(sql) }.join
+        Thread.new(&thread_body).join
       end
     end
 
-    it "does not carry the flag into spawned threads with the default state" do
-      query_in_parent_then_spawned_thread
+    it "does not carry the flag into spawned threads" do
+      query_in_parent_then_spawned_thread { fake_adapter.internal_exec_query(sql) }
 
       expect(fake_adapter.db_call_count).to eq(2)
     end
 
-    it "serves the spawned thread from the cache when the state is inherited" do
-      QueryStash.state = inherited_state
-
-      query_in_parent_then_spawned_thread
+    it "serves a spawned thread from the cache when it enables the stash itself" do
+      query_in_parent_then_spawned_thread do
+        ActiveRecord::Base.with_query_stash { fake_adapter.internal_exec_query(sql) }
+      end
 
       expect(fake_adapter.db_call_count).to eq(1)
     end
@@ -256,6 +256,37 @@ RSpec.describe QueryStash::ActiveRecord do
         expect(described_class.cache).to be_a(ActiveSupport::Cache::FileStore)
         expect(described_class.cache_usage_bytes).to be_a(Integer)
       end
+    end
+  end
+
+  describe "cache errors" do
+    let(:sql) { "SELECT * FROM users WHERE id = 1" }
+    let(:config) { Rails.application.config.query_stash }
+
+    before do
+      described_class.registry.instance_variable_set(:@rules, [])
+      described_class.registry.add_rule(/SELECT/, name: "test", ttl_seconds: 60, ttl_jitter_seconds: 0)
+
+      failing_store = ActiveSupport::Cache::MemoryStore.new
+      failing_store.define_singleton_method(:read) { |*| raise IOError, "cache is down" }
+      described_class.cache = failing_store
+    end
+
+    after { described_class.cache = nil }
+
+    it "raises them in the test environment" do
+      expect(config.raise_on_cache_error).to be(true)
+      expect { described_class.wrap(sql, []) { "db_result" } }.to raise_error(IOError, "cache is down")
+    end
+
+    it "reports them and falls back to the database when raise_on_cache_error is off" do
+      config.raise_on_cache_error = false
+      allow(ActiveSupport.error_reporter).to receive(:report)
+
+      expect(described_class.wrap(sql, []) { "db_result" }).to eq("db_result")
+      expect(ActiveSupport.error_reporter).to have_received(:report).with(an_instance_of(IOError), handled: true)
+    ensure
+      config.raise_on_cache_error = true
     end
   end
 

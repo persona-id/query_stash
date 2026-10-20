@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
-require "query_stash"
+ENV["RAILS_ENV"] = "test"
 
-QueryStash.raise_errors = true
+require_relative "dummy/config/environment"
+
+Dir[File.join(__dir__, "support", "**", "*.rb")].each { |file| require file }
 
 RSpec.configure do |config|
   # Enable flags like --only-failures and --next-failure
@@ -13,6 +15,14 @@ RSpec.configure do |config|
 
   config.expect_with :rspec do |c|
     c.syntax = :expect
+  end
+
+  # Examples tagged `database: :active_record` or `database: :mongo` run real queries, so they only
+  # run against the engine DATABASE_URL points at.
+  config.filter_run_excluding database: ->(database) { database != Dummy.database }
+
+  config.before(:suite) do
+    DummyDatabase.prepare if Dummy.database == :active_record
   end
 
   config.order = :random

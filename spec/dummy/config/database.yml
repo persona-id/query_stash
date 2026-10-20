@@ -1,0 +1,4 @@
+# The URL comes from DATABASE_URL, which Rails merges into this entry.
+test:
+  # QueryStash passes queries with bind parameters through, so values must be inlined.
+  prepared_statements: false

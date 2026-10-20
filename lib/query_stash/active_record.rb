@@ -1,8 +1,7 @@
 # frozen_string_literal: true
 
 require "digest"
-require "active_record"
-require "query_stash/base"
+require_relative "base"
 
 module QueryStash
   module ActiveRecord
@@ -23,17 +22,30 @@ module QueryStash
 
     module ContextMethods
       def with_query_stash(&block)
-        QueryStash.state.wrap(query_stash_active_record_enabled: true, &block)
+        QueryStash::IsolatedState.wrap(
+          query_stash_active_record_enabled: Rails.application.config.query_stash.enabled, &block
+        )
       end
 
       def without_query_stash(&block)
-        QueryStash.state.wrap(query_stash_active_record_enabled: false, &block)
+        QueryStash::IsolatedState.wrap(query_stash_active_record_enabled: false, &block)
+      end
+    end
+
+    # Enables the stash for the duration of each request.
+    class Middleware
+      def initialize(app)
+        @app = app
+      end
+
+      def call(env)
+        ::ActiveRecord::Base.with_query_stash { @app.call(env) }
       end
     end
 
     module AdapterPatch
       def internal_exec_query(sql, name = "SQL", binds = [], ...)
-        if QueryStash.state[:query_stash_active_record_enabled]
+        if QueryStash::IsolatedState[:query_stash_active_record_enabled]
           QueryStash::ActiveRecord.wrap(sql, binds) do
             super(sql, name, binds, ...)
           end
@@ -118,17 +130,5 @@ module QueryStash
       # this module is prepended.
       "v1:#{::ActiveRecord::Base.current_shard}:#{Digest::SHA256.hexdigest(sql)}"
     end
-  end
-end
-
-ActiveSupport.on_load(:active_record) do
-  extend QueryStash::ActiveRecord::ContextMethods
-
-  # This pattern is stolen from the database_rewinder gem
-  ActiveRecord::ConnectionAdapters::AbstractAdapter.descendants.each do |adapter|
-    # In order not to avoid touching AbstractMysqlAdapter
-    next if adapter.descendants.any?
-
-    adapter.prepend(QueryStash::ActiveRecord::AdapterPatch)
   end
 end

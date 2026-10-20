@@ -53,37 +53,26 @@ Know what it does not do:
 bundle add query_stash
 ```
 
-Require the adapters you use. Each one is optional:
+The railtie loads the adapter for each framework your app uses, ActiveRecord
+and Mongoid, when that framework loads.
 
-```ruby
-require "query_stash/active_record"
-require "query_stash/mongo"
-require "query_stash/rack"
-```
-
-ActiveRecord 7.2, 8.0 and 8.1 and Ruby 3.3 through 4.0 are tested in CI.
-The Mongo adapter targets the 2.19 driver.
+ActiveRecord 7.2, 8.0 and 8.1 and Ruby 3.3 through 4.0 are tested in CI,
+against SQLite, PostgreSQL, MySQL and MongoDB (through Mongoid). The Mongo
+adapter targets the 2.19 driver.
 
 ## Usage
 
 ### Turn it on per request and per job
 
-Nothing is stashed outside an enabled block. Add the middleware for
-requests:
+Nothing is stashed outside an enabled block. For requests, the railtie adds
+`QueryStash::ActiveRecord::Middleware` and `QueryStash::Mongo::Middleware`
+to the app's middleware stack, one for each framework your app uses.
+
+For ActiveJob, the railtie wraps every job's `perform` in `with_query_stash`
+the same way. Wrap jobs from other job systems however they allow:
 
 ```ruby
-# config/application.rb
-config.middleware.use QueryStash::Rack::Middleware
-```
-
-And wrap jobs however your job system allows:
-
-```ruby
-class ApplicationJob < ActiveJob::Base
-  around_perform do |_job, block|
-    ActiveRecord::Base.with_query_stash { Mongo.with_query_stash(&block) }
-  end
-end
+ActiveRecord::Base.with_query_stash { Mongo.with_query_stash { run_job } }
 ```
 
 Opt out where reads must see their own writes:
@@ -196,12 +185,12 @@ MemoryStore's size).
 
 The enabled flags live in `ActiveSupport::IsolatedExecutionState`, so
 threads spawned inside an enabled block do not inherit them, and queries in
-those threads bypass the stash. If your app already propagates a context
-object into child threads, point QueryStash at it. Any object with `[]` and
-`wrap(**values, &block)` works:
+those threads bypass the stash. Enable it inside the thread instead:
 
 ```ruby
-QueryStash.state = MyApp::CurrentContext
+Thread.new do
+  ActiveRecord::Base.with_query_stash { Organization.find(id) }
+end
 ```
 
 ### Instrumentation
@@ -215,11 +204,23 @@ A stash hit never reaches the adapter, so it fires no `sql.active_record`
 event. Subscribe to `cache_hit.query_stash` if you count queries per
 request.
 
+### Turning it off
+
+`config.query_stash.enabled` (true by default) is the value
+`with_query_stash`, and so the middlewares, turn the stash on with. Set it to
+false to keep the stash off everywhere without removing any call sites:
+
+```ruby
+# config/environments/development.rb
+config.query_stash.enabled = false
+```
+
 ### Errors
 
 Cache errors never fail the query: the read falls back to the database and
-a failed write is dropped. Errors go to `ActiveSupport.error_reporter`. Set
-`QueryStash.raise_errors = true` in development and test to see them.
+a failed write is dropped. Errors go to `ActiveSupport.error_reporter`,
+except in development and test, where they are raised. Set
+`config.query_stash.raise_on_cache_error` to change that.
 
 ## Why this repo has history from before it existed
 
@@ -340,6 +341,19 @@ bin/setup
 bundle exec rake      # specs + RuboCop
 BUNDLE_GEMFILE=gemfiles/activerecord_7_2.gemfile bundle exec rspec
 ```
+
+The specs boot a Rails app in `spec/dummy`. It uses an in-memory SQLite
+database unless `DATABASE_URL` points somewhere else. The database is
+created if it doesn't exist:
+
+```sh
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/query_stash_test bundle exec rspec
+DATABASE_URL=trilogy://root:mysql@127.0.0.1:3306/query_stash_test bundle exec rspec
+DATABASE_URL=mongodb://127.0.0.1:27017/query_stash_test bundle exec rspec
+```
+
+Examples tagged `database: :active_record` or `database: :mongo` only run
+against that kind of database.
 
 ## License
 

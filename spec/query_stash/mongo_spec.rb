@@ -2,7 +2,6 @@
 
 require "tmpdir"
 require "active_support/testing/time_helpers"
-require "query_stash/mongo"
 
 RSpec.describe QueryStash::Mongo do
   def selector(collection_name, filter)
@@ -183,13 +182,23 @@ RSpec.describe QueryStash::Mongo do
   describe QueryStash::Mongo::ContextMethods do
     describe "#with_query_stash" do
       it "enables the stash" do
-        expect(QueryStash.state[:query_stash_mongo_enabled]).to be_nil
+        expect(QueryStash::IsolatedState[:query_stash_mongo_enabled]).to be_nil
 
         Mongo.with_query_stash do
-          expect(QueryStash.state[:query_stash_mongo_enabled]).to be(true)
+          expect(QueryStash::IsolatedState[:query_stash_mongo_enabled]).to be(true)
         end
 
-        expect(QueryStash.state[:query_stash_mongo_enabled]).to be_nil
+        expect(QueryStash::IsolatedState[:query_stash_mongo_enabled]).to be_nil
+      end
+
+      it "leaves the stash off while config.query_stash.enabled is false" do
+        Rails.application.config.query_stash.enabled = false
+
+        Mongo.with_query_stash do
+          expect(QueryStash::IsolatedState[:query_stash_mongo_enabled]).to be(false)
+        end
+      ensure
+        Rails.application.config.query_stash.enabled = true
       end
     end
 
@@ -201,14 +210,28 @@ RSpec.describe QueryStash::Mongo do
       end
 
       it "disables the stash" do
-        expect(QueryStash.state[:query_stash_mongo_enabled]).to be(true)
+        expect(QueryStash::IsolatedState[:query_stash_mongo_enabled]).to be(true)
 
         Mongo.without_query_stash do
-          expect(QueryStash.state[:query_stash_mongo_enabled]).to be(false)
+          expect(QueryStash::IsolatedState[:query_stash_mongo_enabled]).to be(false)
         end
 
-        expect(QueryStash.state[:query_stash_mongo_enabled]).to be(true)
+        expect(QueryStash::IsolatedState[:query_stash_mongo_enabled]).to be(true)
       end
+    end
+  end
+
+  describe QueryStash::Mongo::Middleware do
+    it "enables the stash during the request and restores it afterwards" do
+      seen = nil
+      app = lambda do |_env|
+        seen = QueryStash::IsolatedState[:query_stash_mongo_enabled]
+        [200, {}, ["ok"]]
+      end
+
+      expect(described_class.new(app).call({})).to eq([200, {}, ["ok"]])
+      expect(seen).to be(true)
+      expect(QueryStash::IsolatedState[:query_stash_mongo_enabled]).to be_nil
     end
   end
 

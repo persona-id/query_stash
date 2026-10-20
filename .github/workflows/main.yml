@@ -13,7 +13,30 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    name: Ruby ${{ matrix.ruby }} / ${{ matrix.gemfile }}
+    name: Ruby ${{ matrix.ruby }} / ${{ matrix.gemfile }} / ${{ matrix.db }}
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: query_stash_test
+        ports:
+          - 5432:5432
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: mysql
+          MYSQL_DATABASE: query_stash_test
+        ports:
+          - 3306:3306
+        options: --health-cmd "mysqladmin ping" --health-interval 10s --health-timeout 5s --health-retries 10
+      mongodb:
+        image: mongo:8.0
+        ports:
+          - 27017:27017
+        options: --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 })'" --health-interval 10s --health-timeout 5s --health-retries 5
     strategy:
       fail-fast: false
       matrix:
@@ -25,8 +48,24 @@ jobs:
           - Gemfile
           - gemfiles/activerecord_7_2.gemfile
           - gemfiles/activerecord_8_0.gemfile
+          - gemfiles/activerecord_8_1.gemfile
+        db:
+          - sqlite3
+          - postgresql
+          - mysql
+          - mongo
+        include:
+          - db: sqlite3
+            database_url: sqlite3::memory:
+          - db: postgresql
+            database_url: postgres://postgres:postgres@127.0.0.1:5432/query_stash_test
+          - db: mysql
+            database_url: trilogy://root:mysql@127.0.0.1:3306/query_stash_test
+          - db: mongo
+            database_url: mongodb://127.0.0.1:27017/query_stash_test
     env:
       BUNDLE_GEMFILE: ${{ github.workspace }}/${{ matrix.gemfile }}
+      DATABASE_URL: ${{ matrix.database_url }}
 
     steps:
       - uses: actions/checkout@v6

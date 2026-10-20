@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
 require "digest"
-require "mongo"
-require "active_support/core_ext/object/json"
 require "query_stash/base"
 
 module QueryStash
@@ -32,17 +30,28 @@ module QueryStash
 
     module ContextMethods
       def with_query_stash(&block)
-        QueryStash.state.wrap(query_stash_mongo_enabled: true, &block)
+        QueryStash::IsolatedState.wrap(query_stash_mongo_enabled: Rails.application.config.query_stash.enabled, &block)
       end
 
       def without_query_stash(&block)
-        QueryStash.state.wrap(query_stash_mongo_enabled: false, &block)
+        QueryStash::IsolatedState.wrap(query_stash_mongo_enabled: false, &block)
+      end
+    end
+
+    # Enables the stash for the duration of each request.
+    class Middleware
+      def initialize(app)
+        @app = app
+      end
+
+      def call(env)
+        ::Mongo.with_query_stash { @app.call(env) }
       end
     end
 
     module AdapterPatch
       def each
-        if QueryStash.state[:query_stash_mongo_enabled]
+        if QueryStash::IsolatedState[:query_stash_mongo_enabled]
           result = QueryStash::Mongo.wrap(self) do |cacheable:|
             # Avoid eager loading the entire result set unless this query actually
             # matches a cache rule. This can cause very quick OOMs
@@ -157,9 +166,3 @@ module QueryStash
     end
   end
 end
-
-Mongo.extend(QueryStash::Mongo::ContextMethods)
-
-Mongo::Collection::View::Iterable.prepend(
-  QueryStash::Mongo::AdapterPatch
-)
