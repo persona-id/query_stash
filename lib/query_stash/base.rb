@@ -1,9 +1,10 @@
 # frozen_string_literal: true
 
+require "concurrent/map"
 require_relative "file_store"
 
 module QueryStash
-  module Base
+  class Base
     class Registry
       Rule = Data.define(
         :selector,
@@ -114,10 +115,51 @@ module QueryStash
       end
     end
 
-    # Built from `config.query_stash.cache_store`, which takes the same values as Rails'
-    # `config.cache_store`. Each adapter builds its own store from it.
-    def cache
-      @cache ||= build_cache_store(*Array(Rails.application.config.query_stash.cache_store))
+    class << self
+      def inherited(subclass)
+        super
+        subclass.instance_variable_set(:@instances, Concurrent::Map.new)
+      end
+
+      def [](app)
+        instances.fetch(app)
+      end
+
+      # Makes `stash` the instance `app` uses.
+      def set(app, stash)
+        instances[app] = stash
+      end
+
+      private
+
+      # The instance each Rails application uses, keyed by the application.
+      attr_reader :instances
+    end
+
+    attr_reader :registry, :cache, :enabled
+
+    # `config` is the Rails application's config; the stash reads `config.query_stash`.
+    def initialize(config)
+      options = config.query_stash
+
+      @enabled = options.enabled
+      @raise_on_cache_error = options.raise_on_cache_error
+      @registry = build_registry
+      @cache = build_cache_store(*Array(options.cache_store))
+      @redis_cache_stats = {}
+    end
+
+    def configure
+      yield registry
+    end
+
+    # Turn the stash on or off for the block. Outside of either, it follows `enabled`.
+    def enable!(&block)
+      QueryStash::IsolatedState.wrap(self => true, &block)
+    end
+
+    def disable!(&block)
+      QueryStash::IsolatedState.wrap(self => false, &block)
     end
 
     def cache_for(rule)
@@ -127,13 +169,12 @@ module QueryStash
     def cache_usage_bytes(rule = nil)
       cache_obj = rule ? cache_for(rule) : cache
       if cache_obj.respond_to?(:redis)
-        @_redis_cache_stats ||= {}
-        updated_at, stats = @_redis_cache_stats[cache_obj]
+        updated_at, stats = @redis_cache_stats[cache_obj]
         # Only update cache stats once every minute to avoid excessive Redis calls
         if updated_at.nil? || updated_at < 1.minute.ago
-          @_redis_cache_stats[cache_obj] = [Time.current, stats]
+          @redis_cache_stats[cache_obj] = [Time.current, stats]
           stats = cache_obj.stats
-          @_redis_cache_stats[cache_obj] = [Time.current, stats]
+          @redis_cache_stats[cache_obj] = [Time.current, stats]
         end
 
         stats&.fetch("used_memory", nil)&.to_i
@@ -145,12 +186,15 @@ module QueryStash
       end
     end
 
-    def registry
-      @_registry ||= Registry.new
+    private
+
+    # Whether `enable!` has turned the stash on for the current execution context.
+    def stashing?
+      QueryStash::IsolatedState.fetch(self) { enabled }
     end
 
-    def configure
-      yield registry
+    def build_registry
+      Registry.new
     end
 
     def rescue_cache_error(&block)
@@ -160,27 +204,22 @@ module QueryStash
       # cleanup making files disappear.
       nil
     rescue StandardError => e
-      raise e if Rails.application.config.query_stash.raise_on_cache_error
+      raise e if @raise_on_cache_error
 
       ActiveSupport.error_reporter.report(e, handled: true)
     end
 
-    private
-
+    # `:file_store` gets a QueryStash::FileStore, with the adapter's prefix on the directory's
+    # basename so each adapter keeps its own directory: "tmp/stash" becomes "tmp/active-record-stash".
     def build_cache_store(store, *parameters)
-      # `:file_store` gets a QueryStash::FileStore, with the adapter's prefix on the directory's
-      # basename so each adapter keeps its own directory: "tmp/stash" becomes "tmp/active-record-stash".
-      if store == :file_store
+      return ActiveSupport::Cache.lookup_store(store, *parameters) unless store == :file_store
 
-        cache_path, options = parameters
+      cache_path, options = parameters
 
-        return QueryStash::FileStore.new(
-          File.join(File.dirname(cache_path), "#{prefix}-#{File.basename(cache_path)}"),
-          **options.to_h
-        )
-      end
-
-      ActiveSupport::Cache.lookup_store(store, *parameters) unless store == :file_store
+      QueryStash::FileStore.new(
+        File.join(File.dirname(cache_path), "#{prefix}-#{File.basename(cache_path)}"),
+        **options.to_h
+      )
     end
   end
 end

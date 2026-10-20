@@ -4,11 +4,7 @@ require "digest"
 require_relative "base"
 
 module QueryStash
-  module ActiveRecord
-    include QueryStash::Base
-
-    extend self
-
+  class ActiveRecord < Base
     CACHEABLE_SQL_REGEX = /\ASELECT/i
     private_constant :CACHEABLE_SQL_REGEX
 
@@ -20,48 +16,32 @@ module QueryStash
       end
     end
 
-    module ContextMethods
-      def with_query_stash(&block)
-        QueryStash::IsolatedState.wrap(
-          query_stash_active_record_enabled: Rails.application.config.query_stash.enabled, &block
-        )
-      end
-
-      def without_query_stash(&block)
-        QueryStash::IsolatedState.wrap(query_stash_active_record_enabled: false, &block)
-      end
-    end
-
-    # Enables the stash for the duration of each request.
+    # Enables the stash for the duration of each request. `application` is the Rails application the
+    # middleware stack belongs to; `app` is the next middleware.
     class Middleware
-      def initialize(app)
+      def initialize(app, application)
         @app = app
+        @application = application
       end
 
       def call(env)
-        ::ActiveRecord::Base.with_query_stash { @app.call(env) }
+        QueryStash::ActiveRecord[@application].enable! { @app.call(env) }
       end
     end
 
     module AdapterPatch
       def internal_exec_query(sql, name = "SQL", binds = [], ...)
-        if QueryStash::IsolatedState[:query_stash_active_record_enabled]
-          QueryStash::ActiveRecord.wrap(sql, binds) do
-            super(sql, name, binds, ...)
-          end
-        else
-          super
-        end
+        QueryStash::ActiveRecord[Rails.application].wrap(sql, binds) { super(sql, name, binds, ...) }
       end
     end
 
     def prefix = "active-record"
 
-    def registry
-      @_registry ||= SqlRegistry.new
-    end
-
+    # Runs the query through the stash, or just yields when the stash is off or the query isn't
+    # stashable.
     def wrap(sql, binds)
+      return yield unless stashing?
+
       # Currently does not support binds
       return yield if binds.present?
 
@@ -122,6 +102,10 @@ module QueryStash
     end
 
     private
+
+    def build_registry
+      SqlRegistry.new
+    end
 
     def cache_key_for(sql)
       # Note that the SQL is already normalized by the adapter here.
