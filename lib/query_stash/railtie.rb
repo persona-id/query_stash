@@ -1,12 +1,21 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/numeric/bytes"
+
 module QueryStash
   class Railtie < Rails::Railtie
     config.before_configuration do
       config.query_stash = ActiveSupport::OrderedOptions.new.update(
         enabled: true,
+        cache_store: [:memory_store, { size: 128.megabytes, compress: true }],
         raise_on_cache_error: Rails.env.development? || Rails.env.test?
       )
+    end
+
+    # Builds the stores at boot, so a bad `cache_store` fails here and not on the first query.
+    config.after_initialize do
+      QueryStash::ActiveRecord.cache if defined?(QueryStash::ActiveRecord)
+      QueryStash::Mongo.cache if defined?(QueryStash::Mongo)
     end
 
     # The middleware stack is built before ActiveRecord::Base and Mongoid::Document load, so the

@@ -155,17 +155,29 @@ A Mongo rule can be routed to its own store with `store:`.
 
 ### Stores
 
-The default store is a per-process
-`ActiveSupport::Cache::MemoryStore.new(size: 128.megabytes, compress: true)`.
-Assign any ActiveSupport cache store instead:
+Set the store with `config.query_stash.cache_store`. It takes the same
+values as Rails' `config.cache_store`: a store name followed by its
+arguments, or a store instance. The default is
+`[:memory_store, { size: 128.megabytes, compress: true }]`, one store per
+process. ActiveRecord and Mongo each build their own store from it, except
+from a store instance, which they share:
 
 ```ruby
-QueryStash::ActiveRecord.cache = ActiveSupport::Cache::RedisCacheStore.new(
+# config/application.rb
+config.query_stash.cache_store = :redis_cache_store, {
   url: ENV["STASH_REDIS_URL"],
   namespace: "query-stash:#{Rails.env}"
-)
-QueryStash::Mongo.cache = QueryStash::Mongo.file_store("tmp/query-stash-mongo", lock_path: "tmp/query-stash-mongo.lock")
+}
+
+# or, shared by the processes on one machine:
+config.query_stash.cache_store = :file_store, "tmp/query-stash"
 ```
+
+`:file_store` builds a `QueryStash::FileStore`, with the adapter's prefix on
+the directory's basename: the example above stores ActiveRecord results in
+`tmp/active-record-query-stash` and Mongo results in `tmp/mongo-query-stash`.
+Each one locks a file next to its directory (`tmp/active-record-query-stash.lock`)
+while it cleans up.
 
 - **MemoryStore**: one copy per process, no network hop. Keep
   `compress: true`; see the history for why.

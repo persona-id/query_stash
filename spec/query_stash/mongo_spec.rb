@@ -236,28 +236,24 @@ RSpec.describe QueryStash::Mongo do
   end
 
   describe ".cache" do
-    it "returns a memoized ActiveSupport::Cache::MemoryStore instance" do
+    it "is a memoized MemoryStore by default" do
       expect(described_class.cache).to be_a(ActiveSupport::Cache::MemoryStore)
       expect(described_class.cache).to be(described_class.cache)
     end
-  end
 
-  describe ".cache=" do
-    after { described_class.cache = nil }
-
-    it "replaces the backing store" do
-      store = ActiveSupport::Cache::MemoryStore.new
-      described_class.cache = store
-
-      expect(described_class.cache).to be(store)
+    it "builds a QueryStash::FileStore under a mongo- prefixed path for :file_store" do
+      Dir.mktmpdir do |dir|
+        with_cache_store(described_class, :file_store, File.join(dir, "stash")) do |store|
+          expect(store).to be_a(QueryStash::FileStore)
+          expect(store.cache_path).to eq(File.join(dir, "mongo-stash"))
+        end
+      end
     end
   end
 
   describe ".cache_usage_bytes" do
-    after { described_class.cache = nil }
-
     it "reports the MemoryStore size" do
-      described_class.cache = ActiveSupport::Cache::MemoryStore.new
+      allow(described_class).to receive(:cache).and_return(ActiveSupport::Cache::MemoryStore.new)
       described_class.cache.write("key", "value")
 
       expect(described_class.cache_usage_bytes).to be_positive
@@ -268,7 +264,7 @@ RSpec.describe QueryStash::Mongo do
       stats = { "used_memory" => 1024 }
       store.define_singleton_method(:redis) { :redis }
       store.define_singleton_method(:stats) { stats.dup }
-      described_class.cache = store
+      allow(described_class).to receive(:cache).and_return(store)
       described_class.instance_variable_set(:@_redis_cache_stats, nil)
 
       expect(described_class.cache_usage_bytes).to eq(1024)
@@ -283,7 +279,7 @@ RSpec.describe QueryStash::Mongo do
           store.define_singleton_method(:stats) { { "used_memory" => used } }
         end
       end
-      described_class.cache = stores.first
+      allow(described_class).to receive(:cache).and_return(stores.first)
       described_class.instance_variable_set(:@_redis_cache_stats, nil)
       routed = described_class.registry.class::Rule.new(
         selector: {}, name: "routed", ttl_seconds: 60, ttl_jitter_seconds: 0,
@@ -296,11 +292,9 @@ RSpec.describe QueryStash::Mongo do
 
     it "reports the size of a file store" do
       Dir.mktmpdir do |dir|
-        described_class.cache = described_class.file_store(File.join(dir, "cache"), lock_path: File.join(dir, "lock"))
-        described_class.instance_variable_set(:@file_cache_stats_last_updated_at, nil)
-
-        expect(described_class.cache).to be_a(ActiveSupport::Cache::FileStore)
-        expect(described_class.cache_usage_bytes).to be_a(Integer)
+        with_cache_store(described_class, :file_store, File.join(dir, "cache")) do
+          expect(described_class.cache_usage_bytes).to be_a(Integer)
+        end
       end
     end
   end

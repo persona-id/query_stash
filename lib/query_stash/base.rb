@@ -114,14 +114,10 @@ module QueryStash
       end
     end
 
-    attr_writer :cache
-
+    # Built from `config.query_stash.cache_store`, which takes the same values as Rails'
+    # `config.cache_store`. Each adapter builds its own store from it.
     def cache
-      @cache ||= ActiveSupport::Cache::MemoryStore.new(size: 128.megabytes, compress: true)
-    end
-
-    def file_store(cache_path, lock_path:)
-      QueryStash::FileStore.new("query-stash-#{prefix}", cache_path, lock_path: lock_path)
+      @cache ||= build_cache_store(*Array(Rails.application.config.query_stash.cache_store))
     end
 
     def cache_for(rule)
@@ -167,6 +163,24 @@ module QueryStash
       raise e if Rails.application.config.query_stash.raise_on_cache_error
 
       ActiveSupport.error_reporter.report(e, handled: true)
+    end
+
+    private
+
+    def build_cache_store(store, *parameters)
+      # `:file_store` gets a QueryStash::FileStore, with the adapter's prefix on the directory's
+      # basename so each adapter keeps its own directory: "tmp/stash" becomes "tmp/active-record-stash".
+      if store == :file_store
+
+        cache_path, options = parameters
+
+        return QueryStash::FileStore.new(
+          File.join(File.dirname(cache_path), "#{prefix}-#{File.basename(cache_path)}"),
+          **options.to_h
+        )
+      end
+
+      ActiveSupport::Cache.lookup_store(store, *parameters) unless store == :file_store
     end
   end
 end

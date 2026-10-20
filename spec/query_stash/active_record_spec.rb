@@ -208,28 +208,36 @@ RSpec.describe QueryStash::ActiveRecord do
   end
 
   describe ".cache" do
-    it "returns a memoized ActiveSupport::Cache::MemoryStore instance" do
+    it "is a memoized MemoryStore by default" do
       expect(described_class.cache).to be_a(ActiveSupport::Cache::MemoryStore)
       expect(described_class.cache).to be(described_class.cache)
     end
-  end
 
-  describe ".cache=" do
-    after { described_class.cache = nil }
+    it "builds the store config.query_stash.cache_store names, with its options" do
+      with_cache_store(described_class, :memory_store, { size: 1.megabyte }) do |store|
+        expect(store).to be_a(ActiveSupport::Cache::MemoryStore)
+        expect(store.instance_variable_get(:@max_size)).to eq(1.megabyte)
+      end
 
-    it "replaces the backing store" do
-      store = ActiveSupport::Cache::MemoryStore.new
-      described_class.cache = store
+      with_cache_store(described_class, :null_store) do |store|
+        expect(store).to be_a(ActiveSupport::Cache::NullStore)
+      end
+    end
 
-      expect(described_class.cache).to be(store)
+    it "builds a QueryStash::FileStore under an active-record- prefixed path for :file_store" do
+      Dir.mktmpdir do |dir|
+        with_cache_store(described_class, :file_store, File.join(dir, "stash"), { expires_in: 60 }) do |store|
+          expect(store).to be_a(QueryStash::FileStore)
+          expect(store.cache_path).to eq(File.join(dir, "active-record-stash"))
+          expect(store.options[:expires_in]).to eq(60)
+        end
+      end
     end
   end
 
   describe ".cache_usage_bytes" do
-    after { described_class.cache = nil }
-
     it "reports the MemoryStore size" do
-      described_class.cache = ActiveSupport::Cache::MemoryStore.new
+      allow(described_class).to receive(:cache).and_return(ActiveSupport::Cache::MemoryStore.new)
       described_class.cache.write("key", "value")
 
       expect(described_class.cache_usage_bytes).to be_positive
@@ -240,7 +248,7 @@ RSpec.describe QueryStash::ActiveRecord do
       stats = { "used_memory" => 1024 }
       store.define_singleton_method(:redis) { :redis }
       store.define_singleton_method(:stats) { stats.dup }
-      described_class.cache = store
+      allow(described_class).to receive(:cache).and_return(store)
       described_class.instance_variable_set(:@_redis_cache_stats, nil)
 
       expect(described_class.cache_usage_bytes).to eq(1024)
@@ -250,11 +258,9 @@ RSpec.describe QueryStash::ActiveRecord do
 
     it "reports the size of a file store" do
       Dir.mktmpdir do |dir|
-        described_class.cache = described_class.file_store(File.join(dir, "cache"), lock_path: File.join(dir, "lock"))
-        described_class.instance_variable_set(:@file_cache_stats_last_updated_at, nil)
-
-        expect(described_class.cache).to be_a(ActiveSupport::Cache::FileStore)
-        expect(described_class.cache_usage_bytes).to be_a(Integer)
+        with_cache_store(described_class, :file_store, File.join(dir, "cache")) do
+          expect(described_class.cache_usage_bytes).to be_a(Integer)
+        end
       end
     end
   end
@@ -269,10 +275,8 @@ RSpec.describe QueryStash::ActiveRecord do
 
       failing_store = ActiveSupport::Cache::MemoryStore.new
       failing_store.define_singleton_method(:read) { |*| raise IOError, "cache is down" }
-      described_class.cache = failing_store
+      allow(described_class).to receive(:cache).and_return(failing_store)
     end
-
-    after { described_class.cache = nil }
 
     it "raises them in the test environment" do
       expect(config.raise_on_cache_error).to be(true)

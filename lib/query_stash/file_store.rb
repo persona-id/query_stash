@@ -19,13 +19,17 @@ module QueryStash
 
     attr_reader :usage_bytes
 
-    def initialize(label, cache_path, lock_path:, **options)
-      super(cache_path, **options)
+    # Background threads are named after the basename of `cache_path`, and the evictor locks
+    # `<cache_path>.lock` so only one process sharing the path cleans it up at a time.
+    def initialize(cache_path, **options)
+      super
+
+      label = File.basename(cache_path)
+      lock_path = "#{cache_path}.lock"
 
       # starts background thread to periodically clean up the file cache so it does not grow
       # unbounded.
       @evictor_thread = Thread.start(self) do |file_cache|
-        Thread.current.name = "#{label}-evictor"
         loop do
           sleep EVICTOR_SLEEP_INTERVAL
           File.open(lock_path, File::RDWR | File::CREAT) do |f|
@@ -42,12 +46,11 @@ module QueryStash
           ActiveSupport.error_reporter.report(e, handled: true)
         end
       end
+      @evictor_thread.name = "#{label}-evictor"
 
       @usage_bytes = fs_usage_bytes
 
       @metrics_thread = Thread.start(self) do |_file_cache|
-        Thread.current.name = "#{label}-metrics"
-
         loop do
           # Only update cache stats once every 30 seconds to avoid excessive STAT syscalls
           sleep METRICS_SLEEP_INTERVAL + rand
@@ -59,6 +62,7 @@ module QueryStash
           logger&.error("Error computing QueryStash::FileStore metrics: #{e.inspect}\n#{e.backtrace&.join("\n")}")
         end
       end
+      @metrics_thread.name = "#{label}-metrics"
     end
 
     private
