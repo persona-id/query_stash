@@ -31,8 +31,9 @@ RSpec.describe QueryStash::FileStore do
     end
 
     it "locks a file next to the cache directory while it cleans up" do
+      # Only the evictor's interval: stubbing `sleep` would also spin the metrics thread, which shells
+      # out to `du` on every turn.
       stub_const("#{described_class}::EVICTOR_SLEEP_INTERVAL", 0)
-      allow(store).to receive(:sleep)
       cleaned = Queue.new
       allow(store).to receive(:cleanup) { cleaned << true }
 
