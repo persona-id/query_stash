@@ -304,35 +304,6 @@ RSpec.describe QueryStash::ActiveRecord do
     end
   end
 
-  describe "#cache_usage_bytes" do
-    it "reports the MemoryStore size" do
-      stash = build_stash(described_class)
-      stash.cache.write("key", "value")
-
-      expect(stash.cache_usage_bytes).to be_positive
-    end
-
-    it "reports used_memory for Redis-backed stores, refreshed at most once a minute" do
-      store = ActiveSupport::Cache::MemoryStore.new
-      stats = { "used_memory" => 1024 }
-      store.define_singleton_method(:redis) { :redis }
-      store.define_singleton_method(:stats) { stats.dup }
-      stash = build_stash(described_class, cache_store: store)
-
-      expect(stash.cache_usage_bytes).to eq(1024)
-      stats["used_memory"] = 2048
-      expect(stash.cache_usage_bytes).to eq(1024)
-    end
-
-    it "reports the size of a file store" do
-      Dir.mktmpdir do |dir|
-        stash = build_stash(described_class, cache_store: [:file_store, File.join(dir, "cache")])
-
-        expect(stash.cache_usage_bytes).to be_a(Integer)
-      end
-    end
-  end
-
   describe "cache errors" do
     let(:sql) { "SELECT * FROM users WHERE id = 1" }
     let(:failing_store) do

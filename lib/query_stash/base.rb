@@ -210,7 +210,6 @@ module QueryStash
       @raise_on_cache_error = options.raise_on_cache_error
       @registry = build_registry
       @cache = cache_store
-      @redis_cache_stats = {}
     end
 
     def configure
@@ -228,26 +227,6 @@ module QueryStash
 
     def cache_for(rule)
       rule.store || cache
-    end
-
-    def cache_usage_bytes(rule = nil)
-      cache_obj = rule ? cache_for(rule) : cache
-      if cache_obj.respond_to?(:redis)
-        updated_at, stats = @redis_cache_stats[cache_obj]
-        # Only update cache stats once every minute to avoid excessive Redis calls
-        if updated_at.nil? || updated_at < Time.now - 60
-          @redis_cache_stats[cache_obj] = [Time.now, stats]
-          stats = cache_obj.stats
-          @redis_cache_stats[cache_obj] = [Time.now, stats]
-        end
-
-        stats&.fetch("used_memory", nil)&.to_i
-      elsif cache_obj.respond_to?(:usage_bytes)
-        cache_obj.usage_bytes
-      else
-        # WARNING: relies on internal ActiveSupport::Cache::MemoryStore API
-        cache_obj.instance_variable_get(:@cache_size)
-      end
     end
 
     private

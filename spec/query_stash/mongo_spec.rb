@@ -283,41 +283,6 @@ RSpec.describe QueryStash::Mongo do
     end
   end
 
-  describe "#cache_usage_bytes" do
-    def redis_like_store(used)
-      ActiveSupport::Cache::MemoryStore.new.tap do |store|
-        store.define_singleton_method(:redis) { :redis }
-        store.define_singleton_method(:stats) { { "used_memory" => used } }
-      end
-    end
-
-    it "reports the MemoryStore size" do
-      stash = build_stash(described_class)
-      stash.cache.write("key", "value")
-
-      expect(stash.cache_usage_bytes).to be_positive
-    end
-
-    it "tracks the once-a-minute Redis stats per store" do
-      stash = build_stash(described_class, cache_store: redis_like_store(1024))
-      routed = described_class::Registry::Rule.new(
-        selector: {}, name: "routed", ttl_seconds: 60, ttl_jitter_seconds: 0,
-        on_cache_hit: nil, on_cache_miss: nil, on_cache_skip: nil, enabled: nil, store: redis_like_store(4096)
-      )
-
-      expect(stash.cache_usage_bytes).to eq(1024)
-      expect(stash.cache_usage_bytes(routed)).to eq(4096)
-    end
-
-    it "reports the size of a file store" do
-      Dir.mktmpdir do |dir|
-        stash = build_stash(described_class, cache_store: [:file_store, File.join(dir, "cache")])
-
-        expect(stash.cache_usage_bytes).to be_a(Integer)
-      end
-    end
-  end
-
   describe "#wrap" do
     let(:stash) { build_stash(described_class) }
     let(:registry) { stash.registry }
@@ -524,14 +489,6 @@ RSpec.describe QueryStash::Mongo do
           expect(routed_store.read(cache_key_for(view))).to eq(["db_doc"])
           expect(cache.instance_variable_get(:@data)).to be_empty
           expect(documents(["different"])).to eq(["db_doc"])
-        end
-
-        it "measures the rule's store in cache_usage_bytes" do
-          documents
-          rule = registry.match_rule(selector("accounts", { "token" => "acct_abc123" }))
-
-          expect(stash.cache_usage_bytes(rule)).to be_positive
-          expect(stash.cache_usage_bytes).to eq(0)
         end
       end
 

@@ -154,8 +154,6 @@ config.query_stash.cache_store = :file_store, "tmp/query-stash"
 - **Redis/Valkey**: shared across processes and hosts. If several environments share one cluster, put the environment in the namespace. The cache key doesn't include it, and two environments with the same database name would otherwise read each other's entries.
 - **`file_store`**: shared by all processes on one machine. A background thread runs `cleanup` every 5 minutes, because FileStore has no LRU and no size cap. Size your rules so the directory can't fill the disk.
 
-`QueryStash::ActiveRecord[Rails.application].cache_usage_bytes` (and the same on `QueryStash::Mongo`) reports the size of the store (Redis `used_memory`, refreshed at most once a minute; the file store's own measurement; or the MemoryStore's size).
-
 ### Threads
 
 What `enable!` and `disable!` set lives in `config.query_stash.isolated_state`, which is `ActiveSupport::IsolatedExecutionState` by default for Ruby on Rails, so threads spawned inside those blocks don't inherit it; they follow `config.query_stash.enabled` instead. Call `enable!` or `disable!` inside the thread to choose:
