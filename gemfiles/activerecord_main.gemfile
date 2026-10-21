@@ -1,0 +1,20 @@
+# frozen_string_literal: true
+
+source "https://rubygems.org"
+
+gemspec path: ".."
+
+git "https://github.com/rails/rails.git", branch: "main" do
+  gem "activejob"
+  gem "activerecord"
+  gem "activesupport"
+  gem "railties"
+end
+
+gem "mongo", "~> 2.19.0"
+gem "mongoid", "~> 9.0"
+gem "pg"
+gem "rake", "~> 13.0"
+gem "rspec", "~> 3.0"
+gem "sqlite3"
+gem "trilogy"

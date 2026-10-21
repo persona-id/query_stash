@@ -8,7 +8,7 @@ module StashHelpers
                                                       .update(Rails.application.config.query_stash)
                                                       .update(overrides)
 
-    adapter.new(config).tap { |stash| built_stashes << stash }
+    QueryStash::Railtie.build(adapter, config).tap { |stash| built_stashes << stash }
   end
 
   def built_stashes
@@ -29,7 +29,7 @@ RSpec.configure do |config|
 
   # A file store's background threads outlive the example otherwise.
   config.after do
-    built_stashes.map(&:cache).grep(QueryStash::FileStore).each do |store|
+    built_stashes.map(&:cache).each do |store|
       store.instance_variable_get(:@metrics_thread)&.kill
       store.instance_variable_get(:@evictor_thread)&.kill
     end

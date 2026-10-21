@@ -1,13 +1,10 @@
 # QueryStash
 
-Cross-request query result caching for ActiveRecord and MongoDB, for the
-handful of hot, slow-changing lookups you choose.
+Cross-request query result caching for the handful of hot, slow-changing lookups you choose.
 
-Rails' query cache lives for one request. QueryStash keeps the result of an
-allowlisted query across requests and jobs, for a TTL you compute from the
-result itself, in an ActiveSupport cache store of your choosing. It hooks
-the database adapter (and the Mongo driver), so call sites don't change:
-`Organization.find(id)` is served from the stash when a rule matches it.
+Currently shipping with adapters for [activerecord](https://rubygems.org/gems/activerecord) and [mongo](https://rubygems.org/gems/mongo).
+
+QueryStash can keep the result of an allowlisted query across requests and jobs, for a TTL you compute from the result itself, in a store of your choosing. It hooks the database adapter (and the Mongo driver), so call sites don't need to change: `Organization.find(id)` is served from the stash when a rule matches it.
 
 ```ruby
 QueryStash::ActiveRecord[Rails.application].configure do |rules|
@@ -20,32 +17,20 @@ QueryStash::ActiveRecord[Rails.application].configure do |rules|
 end
 ```
 
-It ran in production at [Persona](https://withpersona.com) as
-`ProcessQueryCache` from October 2025 before it was extracted into this gem.
+This gem was extracted from code we've been running in production at [Persona](https://withpersona.com).
 
 ## When to use it, and when not to
 
-Use it for point lookups that are read far more often than they change, and
-where a bounded amount of staleness is acceptable: tenants, plans, API key
-lookups, published (immutable) versions of things.
+Use it for point lookups that are read far more often than they change, and where a bounded amount of staleness is acceptable.
 
-Know what it does not do:
+What it does not do:
 
-- **No invalidation.** Entries leave on TTL (plus jitter) or eviction. A
-  write does not clear the stash, so a read after a write can return the
-  old row until the TTL runs out. Wrap read-after-write code in
-  `disable!`, or don't stash those queries.
-- **Inlined SQL only.** Queries with bind parameters are passed through
-  untouched. Use an adapter or configuration that inlines values (Trilogy
-  and mysql2 do by default; set `prepared_statements: false` for SQLite or
-  PostgreSQL).
-- **`SELECT` only**, matched with `/\ASELECT/i`. SQL that starts with a
-  comment, whitespace or a `WITH` clause is never stashed.
-- **Not transaction-aware.** A matching read inside a transaction can be
-  served from the stash instead of seeing the transaction's own writes.
+- **No invalidation.** Entries leave on TTL (plus jitter) or eviction. A write does not clear the stash, so a read after a write can return the old row until the TTL runs out. Wrap read-after-write code in `disable!`, or don't stash those queries.
+- **Inlined SQL only.** Queries with bind parameters are passed through untouched. Use an adapter or configuration that inlines values (Trilogy and mysql2 do by default; set `prepared_statements: false` for SQLite or PostgreSQL).
+- **`SELECT` only**, matched with `/\ASELECT/i`. SQL that starts with a comment, whitespace or a `WITH` clause is never stashed.
+- **Not transaction-aware.** A matching read inside a transaction can be served from the stash instead of seeing the transaction's own writes.
 - **`load_async` queries bypass it.**
-- The ActiveRecord cache key is the SQL plus `ActiveRecord::Base.current_shard`.
-  It does not include the role or the database name.
+- The ActiveRecord cache key is the SQL plus `ActiveRecord::Base.current_shard`. It does not include the role or the database name.
 
 ## Installation
 
@@ -53,37 +38,26 @@ Know what it does not do:
 bundle add query_stash
 ```
 
-The railtie loads the adapter for each framework your app uses, ActiveRecord
-and Mongoid, when that framework loads.
-
-ActiveRecord 7.2, 8.0 and 8.1 and Ruby 3.3 through 4.0 are tested in CI,
-against SQLite, PostgreSQL, MySQL and MongoDB (through Mongoid). The Mongo
-adapter targets the 2.19 driver.
+ActiveRecord 7.2 or more recent and Ruby 3.3 or more recent are supported.
 
 ## Usage
 
 ### Turning it on and off
 
-`config.query_stash.enabled` (true by default) decides whether queries are
-stashed. With the default, every query that matches a rule is stashed,
-including in the console, rake tasks and migrations.
+#### Rails
 
-`enable!` and `disable!` override it for the duration of a block. The
-railtie wraps every request in `enable!` (through
-`QueryStash::ActiveRecord::Middleware` and `QueryStash::Mongo::Middleware`,
-one for each framework your app uses) and every ActiveJob `perform`. So
-with `enabled = false`, only requests and jobs are stashed:
+In rails, `config.query_stash.enabled`, (true by default) decides whether queries are stashed. With the default, every query that matches a rule is stashed, including in requests, active jobs, the console, rake tasks and migrations.
 
 ```ruby
-# config/application.rb
+# config/development.rb
 config.query_stash.enabled = false
 ```
 
-Wrap jobs from other job systems however they allow:
+`enable!` and `disable!` can override it for the duration of a block:
 
 ```ruby
 QueryStash::ActiveRecord[Rails.application].enable! do
-  QueryStash::Mongo[Rails.application].enable! { run_job }
+  run_job
 end
 ```
 
@@ -98,8 +72,6 @@ end
 
 ### ActiveRecord rules
 
-The railtie builds a `QueryStash::ActiveRecord` and a `QueryStash::Mongo`
-for the app from `config.query_stash`, before `config/initializers` run.
 Configure their rules from an initializer.
 
 Rules match the SQL with a `Regexp`, first match wins:
@@ -118,20 +90,15 @@ QueryStash::ActiveRecord[Rails.application].configure do |rules|
   )
 end
 ```
-
-- `ttl_seconds` and `ttl_jitter_seconds` are integers or callables that
-  receive the uncached result. A TTL of 0 or less means "don't cache this
-  result" (a *skip*). Entries are written with
-  `expires_in: ttl_seconds + rand(ttl_jitter_seconds)`, so entries for a hot
-  rule don't all expire at once.
-- `on_cache_hit`, `on_cache_miss` and `on_cache_skip` receive the rule and
-  the result. A miss fires just before the write.
+Besides the regex, the following parameters are accepted as keyword arguments:
+- `name` identifies the rule.
+- `ttl_seconds` and `ttl_jitter_seconds` are integers or callables that receive the uncached result. A TTL of 0 or less means "don't cache this result" (a *skip*). Entries are written with `expires_in: ttl_seconds + rand(ttl_jitter_seconds)`, so entries for a hot rule don't all expire at once.
+- `on_cache_hit`, `on_cache_miss` and `on_cache_skip` receive the rule and the result. A miss fires just before the write.
 - `enabled` turns a single rule off without removing it.
 
 ### Mongo rules
 
-Mongo rules match a selector built from the view: `collection_name`,
-`filter`, `limit`, `skip`, `sort`, `projection` and `pipeline`.
+Mongo rules match a selector built from the view: `collection_name`, `filter`, `limit`, `skip`, `sort`, `projection` and `pipeline`.
 
 ```ruby
 QueryStash::Mongo[Rails.application].configure do |rules|
@@ -159,27 +126,19 @@ Patterns:
 | an Array | it is a prefix of the actual array, element by element |
 | anything else | `actual == pattern`, so `limit: nil` excludes limited queries |
 
-Hash patterns are subset matches: `filter: { "token" => ANY }` also matches
-`{ token: x, deleted_at: nil }`. Mongo queries are easy to cache by
-accident; test every rule against the queries your app actually sends.
+Hash patterns are subset matches: `filter: { "token" => ANY }` also matches `{ token: x, deleted_at: nil }`. Mongo queries are easy to cache by accident; test every rule against the queries your app actually sends.
 
-Queries that match no rule stream through the driver untouched. Matching
-queries are loaded fully into memory so they can be cached, so don't write
-rules for large result sets.
+Queries that match no rule stream through the driver untouched. Matching queries are loaded fully into memory so they can be cached, so don't write rules for large result sets.
 
 A Mongo rule can be routed to its own store with `store:`.
 
 ### Stores
 
-Set the store with `config.query_stash.cache_store`. It takes the same
-values as Rails' `config.cache_store`: a store name followed by its
-arguments, or a store instance. The default is
-`[:memory_store, { size: 128.megabytes, compress: true }]`, one store per
-process. ActiveRecord and Mongo each build their own store from it, except
-from a store instance, which they share:
+Set the store with `config.query_stash.cache_store`. It takes the same values as Rails' `config.cache_store`: a store name followed by its
+arguments, or a store instance. The default is `[:memory_store, { size: 128.megabytes, compress: true }]`, one store per process. ActiveRecord and Mongo each build their own store from it, except from a store instance, which they share:
 
 ```ruby
-# config/application.rb
+# config/production.rb
 config.query_stash.cache_store = :redis_cache_store, {
   url: ENV["STASH_REDIS_URL"],
   namespace: "query-stash:#{Rails.env}"
@@ -189,39 +148,31 @@ config.query_stash.cache_store = :redis_cache_store, {
 config.query_stash.cache_store = :file_store, "tmp/query-stash"
 ```
 
-`:file_store` builds a `QueryStash::FileStore`, with the adapter's prefix on
-the directory's basename: the example above stores ActiveRecord results in
-`tmp/active-record-query-stash` and Mongo results in `tmp/mongo-query-stash`.
-Each one locks a file next to its directory (`tmp/active-record-query-stash.lock`)
-while it cleans up.
+`:file_store` builds a `QueryStash::FileStore`, with the adapter's prefix on the directory's basename: the example above stores ActiveRecord results in `tmp/active-record-query-stash` and Mongo results in `tmp/mongo-query-stash`. Each one locks a file next to its directory (`tmp/active-record-query-stash.lock`) while it cleans up.
 
-- **MemoryStore**: one copy per process, no network hop. Keep
-  `compress: true`; see the history for why.
-- **Redis/Valkey**: shared across processes and hosts. If several
-  environments share one cluster, put the environment in the namespace. The
-  cache key doesn't include it, and two environments with the same database
-  name would otherwise read each other's entries.
-- **`file_store`**: shared by all processes on one machine. A background
-  thread runs `cleanup` every 5 minutes, because FileStore has no LRU and no
-  size cap. Size your rules so the directory can't fill the disk.
+- **MemoryStore**: one copy per process, no network hop. Keep `compress: true`; see the history for why.
+- **Redis/Valkey**: shared across processes and hosts. If several environments share one cluster, put the environment in the namespace. The cache key doesn't include it, and two environments with the same database name would otherwise read each other's entries.
+- **`file_store`**: shared by all processes on one machine. A background thread runs `cleanup` every 5 minutes, because FileStore has no LRU and no size cap. Size your rules so the directory can't fill the disk.
 
-`QueryStash::ActiveRecord[Rails.application].cache_usage_bytes` (and the
-same on `QueryStash::Mongo`) reports the size of the store (Redis
-`used_memory`, refreshed at most once a minute; the file store's own
-measurement; or the MemoryStore's size).
+`QueryStash::ActiveRecord[Rails.application].cache_usage_bytes` (and the same on `QueryStash::Mongo`) reports the size of the store (Redis `used_memory`, refreshed at most once a minute; the file store's own measurement; or the MemoryStore's size).
 
 ### Threads
 
-What `enable!` and `disable!` set lives in
-`ActiveSupport::IsolatedExecutionState`, so threads spawned inside those
-blocks don't inherit it; they follow `config.query_stash.enabled` instead.
-Call `enable!` or `disable!` inside the thread to choose:
+What `enable!` and `disable!` set lives in `config.query_stash.isolated_state`, which is `ActiveSupport::IsolatedExecutionState` by default for Ruby on Rails, so threads spawned inside those blocks don't inherit it; they follow `config.query_stash.enabled` instead. Call `enable!` or `disable!` inside the thread to choose:
 
 ```ruby
 Thread.new do
   QueryStash::ActiveRecord[Rails.application].enable! { Organization.find(id) }
 end
 ```
+
+Any object that responds to `[]`, `[]=`, `key?` and `delete` can be the isolated state, if your app keeps its per-request state somewhere else:
+
+```ruby
+config.query_stash.isolated_state = MyApp::CurrentContext
+```
+
+Without one, the stash keeps it in a thread variable: shared by the fibers of a thread, and not by other threads.
 
 ### Instrumentation
 
@@ -230,16 +181,17 @@ end
 | `cache_read.query_stash` | `adapter`, `rule`, `hit` |
 | `cache_hit.query_stash` (ActiveRecord) | `adapter`, `rule` |
 
-A stash hit never reaches the adapter, so it fires no `sql.active_record`
-event. Subscribe to `cache_hit.query_stash` if you count queries per
-request.
+A stash hit never reaches the adapter, so it fires no `sql.active_record` event. Subscribe to `cache_hit.query_stash` if you count queries per request.
+
+The events go to `config.query_stash.instrumenter`, which is `ActiveSupport::Notifications` by default. Any object with `instrument(name, payload) { |payload| ... }` works.
 
 ### Errors
 
-Cache errors never fail the query: the read falls back to the database and
-a failed write is dropped. Errors go to `ActiveSupport.error_reporter`,
-except in development and test, where they are raised. Set
-`config.query_stash.raise_on_cache_error` to change that.
+Cache errors never fail the query: the read falls back to the database and a failed write is dropped. Errors go to `config.query_stash.error_reporter` (`ActiveSupport.error_reporter` by default; any object with `report(error, handled: true)` works), except in development and test, where they are raised. Set `config.query_stash.raise_on_cache_error` to change that.
+
+## Without Rails
+
+Outside of rails, you must set your application stash manually. A query stashrequires a cache store (any object with `read`, `write(key, value, expires_in:)` and `clear`), an isolated state, an instrumenter and an error reporter. Without the last three, it keeps its state in a thread variable, does not instrument and warns on stderr.
 
 ## Why this repo has history from before it existed
 
@@ -329,19 +281,6 @@ wiring that aren't in this repo's history.
 ## Known issues
 
 These are documented here and will be fixed after 0.1.0.
-
-- **The ActiveRecord patch can miss adapters that load late.** The adapter
-  patch is prepended into the adapter classes that are already loaded when
-  `ActiveRecord::Base` loads. In a standard Rails boot the database adapter
-  usually loads later, on first connection. The stash then does nothing,
-  silently. Until this is fixed, prepend it from your adapter's load hook:
-
-  ```ruby
-  # config/initializers/query_stash.rb
-  ActiveSupport.on_load(:active_record_trilogyadapter) do # or _mysql2adapter, _postgresqladapter, _sqlite3adapter
-    prepend QueryStash::ActiveRecord::AdapterPatch
-  end
-  ```
 
 - A jitter of 0 still adds a fraction of a second, because `rand(0)` returns
   a Float.

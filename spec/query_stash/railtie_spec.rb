@@ -1,6 +1,42 @@
 # frozen_string_literal: true
 
 RSpec.describe QueryStash::Railtie do
+  describe "config.query_stash defaults" do
+    let(:options) { Rails.application.config.query_stash }
+
+    it "hands the stash ActiveSupport's instrumentation and error reporting" do
+      expect(options.instrumenter).to be(ActiveSupport::Notifications)
+      expect(options.error_reporter).to be(ActiveSupport.error_reporter)
+    end
+  end
+
+  describe ".build_cache_store" do
+    it "resolves a store name and its options like Rails does" do
+      store = described_class.build_cache_store(QueryStash::ActiveRecord, :memory_store, { size: 1.megabyte })
+
+      expect(store).to be_a(ActiveSupport::Cache::MemoryStore)
+      expect(store.instance_variable_get(:@max_size)).to eq(1.megabyte)
+    end
+
+    it "hands back a store instance as it is" do
+      store = ActiveSupport::Cache::MemoryStore.new
+
+      expect(described_class.build_cache_store(QueryStash::Mongo, store)).to be(store)
+    end
+  end
+
+  describe "config.query_stash.isolated_state" do
+    it "defaults to ActiveSupport::IsolatedExecutionState" do
+      expect(Rails.application.config.query_stash.isolated_state).to be(ActiveSupport::IsolatedExecutionState)
+    end
+
+    it "is where the app's stashes keep their value" do
+      stash = QueryStash::ActiveRecord[Rails.application]
+
+      stash.enable! { expect(ActiveSupport::IsolatedExecutionState[stash]).to be(true) }
+    end
+  end
+
   describe "middleware" do
     let(:request) { Rack::MockRequest.new(Rails.application) }
 
@@ -55,8 +91,8 @@ RSpec.describe QueryStash::Railtie do
   describe "ActiveJob" do
     it "enables the stash for both adapters while a job runs and restores it afterwards" do
       expect(StashStateJob.perform_now).to eq([true, true])
-      expect(QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]).to be_nil
-      expect(QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]).to be_nil
+      expect(ActiveSupport::IsolatedExecutionState[QueryStash::ActiveRecord[Rails.application]]).to be_nil
+      expect(ActiveSupport::IsolatedExecutionState[QueryStash::Mongo[Rails.application]]).to be_nil
     end
 
     it "enables the stash for both adapters even while the app's stashes are not enabled" do

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "digest"
+require "json"
 require_relative "base"
 
 module QueryStash
@@ -43,7 +44,7 @@ module QueryStash
       end
     end
 
-    def prefix = "mongo"
+    def self.prefix = "mongo"
 
     # Runs the view's cursor through the stash: `cursor` iterates the view's documents into the block
     # it is given, and `consumer` is the block `each` was called with.
@@ -67,7 +68,9 @@ module QueryStash
       # This can cause very quick OOMs if it has to load a whole collection at once.
       return cursor.call(&consumer) unless rule
 
-      documents = fetch(cache_key_for(view.database.name, selector), rule) do
+      cache_key = cache_key_for(view.database.name, selector)
+
+      documents = fetch(cache_key, rule) do
         [].tap { |docs| cursor.call { |doc| docs << doc } }
       end
 
@@ -81,17 +84,17 @@ module QueryStash
     end
 
     def fetch(cache_key, rule)
-      cache_obj = cache_for(rule)
+      cache_store = cache_for(rule)
 
       rescue_cache_error do
-        cached_result = ActiveSupport::Notifications.instrument(
+        cached_result = @instrumenter.instrument(
           "cache_read.query_stash",
           adapter: :mongo,
           rule: rule.name
         ) do |payload|
-          value = cache_obj.read(cache_key)
-          payload[:hit] = !value.nil?
-          value
+          cache_store.read(cache_key).tap do |value|
+            payload[:hit] = !value.nil?
+          end
         end
         # Results are always Arrays (never nil), so nil unambiguously means a miss.
         unless cached_result.nil?
@@ -100,32 +103,19 @@ module QueryStash
         end
       end
 
-      result = yield
+      yield.tap do |result|
+        ttl_seconds = rule.ttl_seconds_for(result)
+        ttl_jitter_seconds = rule.ttl_jitter_seconds_for(result)
 
-      rescue_cache_error do
-        ttl_seconds =
-          if rule.ttl_seconds.respond_to?(:call)
-            rule.ttl_seconds.call(result).to_i
+        rescue_cache_error do
+          if ttl_seconds.positive?
+            rule.on_cache_miss&.call(rule, result)
+            cache_store.write(cache_key, result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
           else
-            rule.ttl_seconds.to_i
+            rule.on_cache_skip&.call(rule, result)
           end
-
-        ttl_jitter_seconds =
-          if rule.ttl_jitter_seconds.respond_to?(:call)
-            rule.ttl_jitter_seconds.call(result).to_i
-          else
-            rule.ttl_jitter_seconds.to_i
-          end
-
-        if ttl_seconds.positive?
-          rule.on_cache_miss&.call(rule, result)
-          cache_obj.write(cache_key, result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
-        else
-          rule.on_cache_skip&.call(rule, result)
         end
       end
-
-      result
     end
 
     # Based off of #cache_key from Mongo::QueryCache

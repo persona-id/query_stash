@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "concurrent/map"
-require_relative "file_store"
 
 module QueryStash
   class Base
@@ -16,7 +15,23 @@ module QueryStash
         :on_cache_skip,
         :enabled,
         :store
-      )
+      ) do
+        def ttl_seconds_for(result)
+          if ttl_seconds.respond_to?(:call)
+            ttl_seconds.call(result).to_i
+          else
+            ttl_seconds.to_i
+          end
+        end
+
+        def ttl_jitter_seconds_for(result)
+          if ttl_jitter_seconds.respond_to?(:call)
+            ttl_jitter_seconds.call(result).to_i
+          else
+            ttl_jitter_seconds.to_i
+          end
+        end
+      end
 
       attr_reader :rules
 
@@ -35,9 +50,9 @@ module QueryStash
         enabled: nil,
         store: nil
       )
-        raise "Rule name is required" if name.blank?
+        raise Error, "Rule name is required" if name.nil? || name.empty?
 
-        raise "Rule name #{name.inspect} is already taken" if @rules.any? { |r| r.name == name }
+        raise Error, "Rule name #{name.inspect} is already taken" if @rules.any? { |r| r.name == name }
 
         @rules << Rule.new(
           selector: selector,
@@ -115,6 +130,53 @@ module QueryStash
       end
     end
 
+    # Where `enable!` and `disable!` keep what they set, when `config.query_stash.isolated_state` is
+    # not given: a hash in a thread variable, so every fiber of a thread sees the same values and
+    # other threads see none.
+    #
+    # An isolated state is any object that responds to `[]`, `[]=`, `key?` and `delete`, like
+    # `ActiveSupport::IsolatedExecutionState`.
+    class ThreadVariableState
+      THREAD_VARIABLE = :query_stash_state
+
+      def [](key)
+        values[key]
+      end
+
+      def []=(key, value)
+        values[key] = value
+      end
+
+      def key?(key)
+        values.key?(key)
+      end
+
+      def delete(key)
+        values.delete(key)
+      end
+
+      private
+
+      def values
+        Thread.current.thread_variable_get(THREAD_VARIABLE) ||
+          Thread.current.thread_variable_set(THREAD_VARIABLE, {})
+      end
+    end
+
+    # Used when `config.query_stash.instrumenter` is not given: runs the block and tells no one.
+    class NullInstrumenter
+      def instrument(_name, payload = {})
+        yield payload if block_given?
+      end
+    end
+
+    # Used when `config.query_stash.error_reporter` is not given.
+    class WarnErrorReporter
+      def report(error, handled: true) # rubocop:disable Lint/UnusedMethodArgument
+        warn("QueryStash: #{error.class}: #{error.message}")
+      end
+    end
+
     class << self
       def inherited(subclass)
         super
@@ -122,30 +184,32 @@ module QueryStash
       end
 
       def [](app)
-        instances.fetch(app)
+        @instances.fetch(app)
       end
 
       # Makes `stash` the instance `app` uses.
       def set(app, stash)
-        instances[app] = stash
+        @instances[app] = stash
       end
-
-      private
-
-      # The instance each Rails application uses, keyed by the application.
-      attr_reader :instances
     end
 
     attr_reader :registry, :cache, :enabled
 
     # `config` is the Rails application's config; the stash reads `config.query_stash`.
-    def initialize(config)
+    #
+    # `cache_store` is where results are kept: any object that responds to `read(key)`,
+    # `write(key, value, expires_in:)` and `clear`, like an ActiveSupport cache store. It is not
+    # `config.query_stash.cache_store`, which names a store and is turned into one by the railtie.
+    def initialize(config, cache_store:)
       options = config.query_stash
 
       @enabled = options.enabled
+      @isolated_state = options.isolated_state || ThreadVariableState.new
+      @instrumenter = options.instrumenter || NullInstrumenter.new
+      @error_reporter = options.error_reporter || WarnErrorReporter.new
       @raise_on_cache_error = options.raise_on_cache_error
       @registry = build_registry
-      @cache = build_cache_store(*Array(options.cache_store))
+      @cache = cache_store
       @redis_cache_stats = {}
     end
 
@@ -155,11 +219,11 @@ module QueryStash
 
     # Turn the stash on or off for the block. Outside of either, it follows `enabled`.
     def enable!(&block)
-      QueryStash::IsolatedState.wrap(self => true, &block)
+      isolate(true, &block)
     end
 
     def disable!(&block)
-      QueryStash::IsolatedState.wrap(self => false, &block)
+      isolate(false, &block)
     end
 
     def cache_for(rule)
@@ -171,14 +235,14 @@ module QueryStash
       if cache_obj.respond_to?(:redis)
         updated_at, stats = @redis_cache_stats[cache_obj]
         # Only update cache stats once every minute to avoid excessive Redis calls
-        if updated_at.nil? || updated_at < 1.minute.ago
-          @redis_cache_stats[cache_obj] = [Time.current, stats]
+        if updated_at.nil? || updated_at < Time.now - 60
+          @redis_cache_stats[cache_obj] = [Time.now, stats]
           stats = cache_obj.stats
-          @redis_cache_stats[cache_obj] = [Time.current, stats]
+          @redis_cache_stats[cache_obj] = [Time.now, stats]
         end
 
         stats&.fetch("used_memory", nil)&.to_i
-      elsif cache_obj.is_a?(QueryStash::FileStore)
+      elsif cache_obj.respond_to?(:usage_bytes)
         cache_obj.usage_bytes
       else
         # WARNING: relies on internal ActiveSupport::Cache::MemoryStore API
@@ -188,9 +252,24 @@ module QueryStash
 
     private
 
-    # Whether `enable!` has turned the stash on for the current execution context.
+    # Whether the stash is on for the current execution context: what `enable!` or `disable!` set
+    # there, or else `enabled`.
     def stashing?
-      QueryStash::IsolatedState.fetch(self) { enabled }
+      @isolated_state.key?(self) ? @isolated_state[self] : enabled
+    end
+
+    # Sets the stash on or off in the isolated state for the block, then puts back what was there.
+    def isolate(value)
+      had_value = @isolated_state.key?(self)
+      previous = @isolated_state[self]
+      @isolated_state[self] = value
+      yield
+    ensure
+      if had_value
+        @isolated_state[self] = previous
+      else
+        @isolated_state.delete(self)
+      end
     end
 
     def build_registry
@@ -206,20 +285,7 @@ module QueryStash
     rescue StandardError => e
       raise e if @raise_on_cache_error
 
-      ActiveSupport.error_reporter.report(e, handled: true)
-    end
-
-    # `:file_store` gets a QueryStash::FileStore, with the adapter's prefix on the directory's
-    # basename so each adapter keeps its own directory: "tmp/stash" becomes "tmp/active-record-stash".
-    def build_cache_store(store, *parameters)
-      return ActiveSupport::Cache.lookup_store(store, *parameters) unless store == :file_store
-
-      cache_path, options = parameters
-
-      QueryStash::FileStore.new(
-        File.join(File.dirname(cache_path), "#{prefix}-#{File.basename(cache_path)}"),
-        **options.to_h
-      )
+      @error_reporter.report(e, handled: true)
     end
   end
 end
