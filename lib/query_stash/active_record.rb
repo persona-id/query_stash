@@ -43,7 +43,7 @@ module QueryStash
       return yield unless stashing?
 
       # Currently does not support binds
-      return yield if binds.present?
+      return yield if binds&.any?
 
       return yield unless CACHEABLE_SQL_REGEX.match?(sql)
 
@@ -53,7 +53,7 @@ module QueryStash
       return yield unless rule.enabled.nil? || rule.enabled.call
 
       cache_key = cache_key_for(sql)
-      cache_obj = cache
+      cache_store = cache_for(rule)
 
       rescue_cache_error do
         cached_result = ActiveSupport::Notifications.instrument(
@@ -61,10 +61,11 @@ module QueryStash
           adapter: :active_record,
           rule: rule.name
         ) do |payload|
-          value = cache_obj.read(cache_key)
-          payload[:hit] = !value.nil?
-          value
+          cache_store.read(cache_key).tap do |value|
+            payload[:hit] = !value.nil?
+          end
         end
+
         # Results are always ActiveRecord::Result (never nil), so nil means a miss.
         unless cached_result.nil?
           ActiveSupport::Notifications.instrument("cache_hit.query_stash", adapter: :active_record, rule: rule.name)
@@ -73,32 +74,30 @@ module QueryStash
         end
       end
 
-      result = yield
+      yield.tap do |result|
+        rescue_cache_error do
+          ttl_seconds =
+            if rule.ttl_seconds.respond_to?(:call)
+              rule.ttl_seconds.call(result).to_i
+            else
+              rule.ttl_seconds.to_i
+            end
 
-      rescue_cache_error do
-        ttl_seconds =
-          if rule.ttl_seconds.respond_to?(:call)
-            rule.ttl_seconds.call(result).to_i
+          ttl_jitter_seconds =
+            if rule.ttl_jitter_seconds.respond_to?(:call)
+              rule.ttl_jitter_seconds.call(result).to_i
+            else
+              rule.ttl_jitter_seconds.to_i
+            end
+
+          if ttl_seconds.positive?
+            rule.on_cache_miss&.call(rule, result)
+            cache_store.write(cache_key, result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
           else
-            rule.ttl_seconds.to_i
+            rule.on_cache_skip&.call(rule, result)
           end
-
-        ttl_jitter_seconds =
-          if rule.ttl_jitter_seconds.respond_to?(:call)
-            rule.ttl_jitter_seconds.call(result).to_i
-          else
-            rule.ttl_jitter_seconds.to_i
-          end
-
-        if ttl_seconds.positive?
-          rule.on_cache_miss&.call(rule, result)
-          cache_obj.write(cache_key, result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
-        else
-          rule.on_cache_skip&.call(rule, result)
         end
       end
-
-      result
     end
 
     private

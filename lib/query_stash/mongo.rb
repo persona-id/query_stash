@@ -67,7 +67,9 @@ module QueryStash
       # This can cause very quick OOMs if it has to load a whole collection at once.
       return cursor.call(&consumer) unless rule
 
-      documents = fetch(cache_key_for(view.database.name, selector), rule) do
+      cache_key = cache_key_for(view.database.name, selector)
+
+      documents = fetch(cache_key, rule) do
         [].tap { |docs| cursor.call { |doc| docs << doc } }
       end
 
@@ -81,7 +83,7 @@ module QueryStash
     end
 
     def fetch(cache_key, rule)
-      cache_obj = cache_for(rule)
+      cache_store = cache_for(rule)
 
       rescue_cache_error do
         cached_result = ActiveSupport::Notifications.instrument(
@@ -89,9 +91,9 @@ module QueryStash
           adapter: :mongo,
           rule: rule.name
         ) do |payload|
-          value = cache_obj.read(cache_key)
-          payload[:hit] = !value.nil?
-          value
+          cache_store.read(cache_key).tap do |value|
+            payload[:hit] = !value.nil?
+          end
         end
         # Results are always Arrays (never nil), so nil unambiguously means a miss.
         unless cached_result.nil?
@@ -119,7 +121,7 @@ module QueryStash
 
         if ttl_seconds.positive?
           rule.on_cache_miss&.call(rule, result)
-          cache_obj.write(cache_key, result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
+          cache_store.write(cache_key, result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
         else
           rule.on_cache_skip&.call(rule, result)
         end
