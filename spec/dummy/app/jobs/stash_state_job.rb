@@ -3,8 +3,8 @@
 class StashStateJob < ActiveJob::Base
   def perform
     [
-      QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]],
-      QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]
+      ActiveSupport::IsolatedExecutionState[QueryStash::ActiveRecord[Rails.application]],
+      ActiveSupport::IsolatedExecutionState[QueryStash::Mongo[Rails.application]]
     ]
   end
 end

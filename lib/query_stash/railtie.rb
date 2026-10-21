@@ -1,12 +1,14 @@
 # frozen_string_literal: true
 
 require "active_support/core_ext/numeric/bytes"
+require "active_support/isolated_execution_state"
 
 module QueryStash
   class Railtie < Rails::Railtie
     config.before_configuration do
       config.query_stash = ActiveSupport::OrderedOptions.new.update(
         enabled: true,
+        isolated_state: ActiveSupport::IsolatedExecutionState,
         cache_store: [:memory_store, { size: 128.megabytes, compress: true }],
         raise_on_cache_error: Rails.env.development? || Rails.env.test?
       )

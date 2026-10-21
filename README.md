@@ -213,15 +213,26 @@ measurement; or the MemoryStore's size).
 ### Threads
 
 What `enable!` and `disable!` set lives in
-`ActiveSupport::IsolatedExecutionState`, so threads spawned inside those
-blocks don't inherit it; they follow `config.query_stash.enabled` instead.
-Call `enable!` or `disable!` inside the thread to choose:
+`config.query_stash.isolated_state`, which is
+`ActiveSupport::IsolatedExecutionState` by default, so threads spawned inside
+those blocks don't inherit it; they follow `config.query_stash.enabled`
+instead. Call `enable!` or `disable!` inside the thread to choose:
 
 ```ruby
 Thread.new do
   QueryStash::ActiveRecord[Rails.application].enable! { Organization.find(id) }
 end
 ```
+
+Any object that responds to `[]`, `[]=`, `key?` and `delete` can be the
+isolated state, if your app keeps its per-request state somewhere else:
+
+```ruby
+config.query_stash.isolated_state = MyApp::CurrentContext
+```
+
+Without one, the stash keeps it in a thread variable: shared by the fibers of
+a thread, and not by other threads.
 
 ### Instrumentation
 

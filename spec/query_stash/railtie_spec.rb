@@ -1,6 +1,18 @@
 # frozen_string_literal: true
 
 RSpec.describe QueryStash::Railtie do
+  describe "config.query_stash.isolated_state" do
+    it "defaults to ActiveSupport::IsolatedExecutionState" do
+      expect(Rails.application.config.query_stash.isolated_state).to be(ActiveSupport::IsolatedExecutionState)
+    end
+
+    it "is where the app's stashes keep their value" do
+      stash = QueryStash::ActiveRecord[Rails.application]
+
+      stash.enable! { expect(ActiveSupport::IsolatedExecutionState[stash]).to be(true) }
+    end
+  end
+
   describe "middleware" do
     let(:request) { Rack::MockRequest.new(Rails.application) }
 
@@ -55,8 +67,8 @@ RSpec.describe QueryStash::Railtie do
   describe "ActiveJob" do
     it "enables the stash for both adapters while a job runs and restores it afterwards" do
       expect(StashStateJob.perform_now).to eq([true, true])
-      expect(QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]).to be_nil
-      expect(QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]).to be_nil
+      expect(ActiveSupport::IsolatedExecutionState[QueryStash::ActiveRecord[Rails.application]]).to be_nil
+      expect(ActiveSupport::IsolatedExecutionState[QueryStash::Mongo[Rails.application]]).to be_nil
     end
 
     it "enables the stash for both adapters even while the app's stashes are not enabled" do

@@ -145,20 +145,20 @@ RSpec.describe QueryStash::ActiveRecord do
   describe "toggling the stash" do
     describe "#enable!" do
       it "enables the stash" do
-        expect(QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]).to be_nil
+        expect(ActiveSupport::IsolatedExecutionState[QueryStash::ActiveRecord[Rails.application]]).to be_nil
 
         QueryStash::ActiveRecord[Rails.application].enable! do
-          expect(QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]).to be(true)
+          expect(ActiveSupport::IsolatedExecutionState[QueryStash::ActiveRecord[Rails.application]]).to be(true)
         end
 
-        expect(QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]).to be_nil
+        expect(ActiveSupport::IsolatedExecutionState[QueryStash::ActiveRecord[Rails.application]]).to be_nil
       end
 
       it "turns the stash on even while the app's stash is not enabled" do
         allow(QueryStash::ActiveRecord[Rails.application]).to receive(:enabled).and_return(false)
 
         QueryStash::ActiveRecord[Rails.application].enable! do
-          expect(QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]).to be(true)
+          expect(ActiveSupport::IsolatedExecutionState[QueryStash::ActiveRecord[Rails.application]]).to be(true)
         end
       end
     end
@@ -171,13 +171,13 @@ RSpec.describe QueryStash::ActiveRecord do
       end
 
       it "disables the stash" do
-        expect(QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]).to be(true)
+        expect(ActiveSupport::IsolatedExecutionState[QueryStash::ActiveRecord[Rails.application]]).to be(true)
 
         QueryStash::ActiveRecord[Rails.application].disable! do
-          expect(QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]).to be(false)
+          expect(ActiveSupport::IsolatedExecutionState[QueryStash::ActiveRecord[Rails.application]]).to be(false)
         end
 
-        expect(QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]).to be(true)
+        expect(ActiveSupport::IsolatedExecutionState[QueryStash::ActiveRecord[Rails.application]]).to be(true)
       end
     end
   end
@@ -186,13 +186,13 @@ RSpec.describe QueryStash::ActiveRecord do
     it "enables the stash during the request and restores it afterwards" do
       seen = nil
       app = lambda do |_env|
-        seen = QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]
+        seen = ActiveSupport::IsolatedExecutionState[QueryStash::ActiveRecord[Rails.application]]
         [200, {}, ["ok"]]
       end
 
       expect(described_class.new(app, Rails.application).call({})).to eq([200, {}, ["ok"]])
       expect(seen).to be(true)
-      expect(QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]).to be_nil
+      expect(ActiveSupport::IsolatedExecutionState[QueryStash::ActiveRecord[Rails.application]]).to be_nil
     end
 
     it "uses the stash of the application it was given" do
@@ -201,7 +201,7 @@ RSpec.describe QueryStash::ActiveRecord do
       QueryStash::ActiveRecord.set(other_application, other_stash)
       seen = nil
       app = lambda do |_env|
-        seen = [QueryStash::IsolatedState[other_stash], QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]]
+        seen = [ActiveSupport::IsolatedExecutionState[other_stash], ActiveSupport::IsolatedExecutionState[QueryStash::ActiveRecord[Rails.application]]]
         [200, {}, ["ok"]]
       end
 

@@ -194,20 +194,20 @@ RSpec.describe QueryStash::Mongo do
   describe "toggling the stash" do
     describe "#enable!" do
       it "enables the stash" do
-        expect(QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]).to be_nil
+        expect(ActiveSupport::IsolatedExecutionState[QueryStash::Mongo[Rails.application]]).to be_nil
 
         QueryStash::Mongo[Rails.application].enable! do
-          expect(QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]).to be(true)
+          expect(ActiveSupport::IsolatedExecutionState[QueryStash::Mongo[Rails.application]]).to be(true)
         end
 
-        expect(QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]).to be_nil
+        expect(ActiveSupport::IsolatedExecutionState[QueryStash::Mongo[Rails.application]]).to be_nil
       end
 
       it "turns the stash on even while the app's stash is not enabled" do
         allow(QueryStash::Mongo[Rails.application]).to receive(:enabled).and_return(false)
 
         QueryStash::Mongo[Rails.application].enable! do
-          expect(QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]).to be(true)
+          expect(ActiveSupport::IsolatedExecutionState[QueryStash::Mongo[Rails.application]]).to be(true)
         end
       end
     end
@@ -220,13 +220,13 @@ RSpec.describe QueryStash::Mongo do
       end
 
       it "disables the stash" do
-        expect(QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]).to be(true)
+        expect(ActiveSupport::IsolatedExecutionState[QueryStash::Mongo[Rails.application]]).to be(true)
 
         QueryStash::Mongo[Rails.application].disable! do
-          expect(QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]).to be(false)
+          expect(ActiveSupport::IsolatedExecutionState[QueryStash::Mongo[Rails.application]]).to be(false)
         end
 
-        expect(QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]).to be(true)
+        expect(ActiveSupport::IsolatedExecutionState[QueryStash::Mongo[Rails.application]]).to be(true)
       end
     end
   end
@@ -235,13 +235,13 @@ RSpec.describe QueryStash::Mongo do
     it "enables the stash during the request and restores it afterwards" do
       seen = nil
       app = lambda do |_env|
-        seen = QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]
+        seen = ActiveSupport::IsolatedExecutionState[QueryStash::Mongo[Rails.application]]
         [200, {}, ["ok"]]
       end
 
       expect(described_class.new(app, Rails.application).call({})).to eq([200, {}, ["ok"]])
       expect(seen).to be(true)
-      expect(QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]).to be_nil
+      expect(ActiveSupport::IsolatedExecutionState[QueryStash::Mongo[Rails.application]]).to be_nil
     end
 
     it "uses the stash of the application it was given" do
@@ -250,7 +250,7 @@ RSpec.describe QueryStash::Mongo do
       QueryStash::Mongo.set(other_application, other_stash)
       seen = nil
       app = lambda do |_env|
-        seen = [QueryStash::IsolatedState[other_stash], QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]]
+        seen = [ActiveSupport::IsolatedExecutionState[other_stash], ActiveSupport::IsolatedExecutionState[QueryStash::Mongo[Rails.application]]]
         [200, {}, ["ok"]]
       end
 

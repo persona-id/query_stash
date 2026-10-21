@@ -115,6 +115,39 @@ module QueryStash
       end
     end
 
+    # Where `enable!` and `disable!` keep what they set, when `config.query_stash.isolated_state` is
+    # not given: a hash in a thread variable, so every fiber of a thread sees the same values and
+    # other threads see none.
+    #
+    # An isolated state is any object that responds to `[]`, `[]=`, `key?` and `delete`, like
+    # `ActiveSupport::IsolatedExecutionState`.
+    class ThreadVariableState
+      THREAD_VARIABLE = :query_stash_state
+
+      def [](key)
+        values[key]
+      end
+
+      def []=(key, value)
+        values[key] = value
+      end
+
+      def key?(key)
+        values.key?(key)
+      end
+
+      def delete(key)
+        values.delete(key)
+      end
+
+      private
+
+      def values
+        Thread.current.thread_variable_get(THREAD_VARIABLE) ||
+          Thread.current.thread_variable_set(THREAD_VARIABLE, {})
+      end
+    end
+
     class << self
       def inherited(subclass)
         super
@@ -138,6 +171,7 @@ module QueryStash
       options = config.query_stash
 
       @enabled = options.enabled
+      @isolated_state = options.isolated_state || ThreadVariableState.new
       @raise_on_cache_error = options.raise_on_cache_error
       @registry = build_registry
       @cache = build_cache_store(*Array(options.cache_store))
@@ -150,11 +184,11 @@ module QueryStash
 
     # Turn the stash on or off for the block. Outside of either, it follows `enabled`.
     def enable!(&block)
-      QueryStash::IsolatedState.wrap(self => true, &block)
+      isolate(true, &block)
     end
 
     def disable!(&block)
-      QueryStash::IsolatedState.wrap(self => false, &block)
+      isolate(false, &block)
     end
 
     def cache_for(rule)
@@ -183,9 +217,24 @@ module QueryStash
 
     private
 
-    # Whether `enable!` has turned the stash on for the current execution context.
+    # Whether the stash is on for the current execution context: what `enable!` or `disable!` set
+    # there, or else `enabled`.
     def stashing?
-      QueryStash::IsolatedState.fetch(self) { enabled }
+      @isolated_state.key?(self) ? @isolated_state[self] : enabled
+    end
+
+    # Sets the stash on or off in the isolated state for the block, then puts back what was there.
+    def isolate(value)
+      had_value = @isolated_state.key?(self)
+      previous = @isolated_state[self]
+      @isolated_state[self] = value
+      yield
+    ensure
+      if had_value
+        @isolated_state[self] = previous
+      else
+        @isolated_state.delete(self)
+      end
     end
 
     def build_registry
