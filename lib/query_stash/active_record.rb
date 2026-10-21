@@ -76,19 +76,9 @@ module QueryStash
 
       yield.tap do |result|
         rescue_cache_error do
-          ttl_seconds =
-            if rule.ttl_seconds.respond_to?(:call)
-              rule.ttl_seconds.call(result).to_i
-            else
-              rule.ttl_seconds.to_i
-            end
+          ttl_seconds = rule.ttl_seconds_for(result)
 
-          ttl_jitter_seconds =
-            if rule.ttl_jitter_seconds.respond_to?(:call)
-              rule.ttl_jitter_seconds.call(result).to_i
-            else
-              rule.ttl_jitter_seconds.to_i
-            end
+          ttl_jitter_seconds = rule.ttl_jitter_seconds_for(result)
 
           if ttl_seconds.positive?
             rule.on_cache_miss&.call(rule, result)

@@ -16,7 +16,23 @@ module QueryStash
         :on_cache_skip,
         :enabled,
         :store
-      )
+      ) do
+        def ttl_seconds_for(result)
+          if ttl_seconds.respond_to?(:call)
+            ttl_seconds.call(result).to_i
+          else
+            ttl_seconds.to_i
+          end
+        end
+
+        def ttl_jitter_seconds_for(result)
+          if ttl_jitter_seconds.respond_to?(:call)
+            ttl_jitter_seconds.call(result).to_i
+          else
+            ttl_jitter_seconds.to_i
+          end
+        end
+      end
 
       attr_reader :rules
 
