@@ -33,3 +33,8 @@ Naming/BlockForwarding:
 
 Style/ArgumentsForwarding:
   Enabled: false
+
+# The `#:` and `#|` comments are the inline RBS annotations, and `# steep:ignore` ones are Steep's.
+Layout/LeadingCommentSpace:
+  AllowRBSInlineAnnotation: true
+  AllowSteepAnnotation: true

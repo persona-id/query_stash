@@ -21,3 +21,9 @@ gem "mongoid", "~> 9.0"
 gem "pg"
 gem "sqlite3"
 gem "trilogy"
+
+# Only for `rake types`: CI leaves them out of the jobs that do not run it, with BUNDLE_WITHOUT=types.
+group :types do
+  gem "rbs-inline", require: false
+  gem "steep", require: false
+end

@@ -1,0 +1,12 @@
+# Not in the RBS that comes with the version of rbs in use.
+module ObjectSpace
+  class WeakMap[K, V]
+    def []: (K key) -> V?
+
+    def []=: (K key, V value) -> V
+
+    def delete: (K key) -> V?
+
+    def key?: (K key) -> bool
+  end
+end

@@ -20,6 +20,7 @@ module QueryStash
     class << self
       # The `adapter` (QueryStash::ActiveRecord or QueryStash::Mongo) for the app's `config`, with
       # its own options over the ones of `config.query_stash`, and the cache store they name.
+      #: (singleton(Base) adapter, untyped config) -> Base
       def build(adapter, config)
         options = options_for(adapter, config)
 
@@ -32,6 +33,7 @@ module QueryStash
 
       # `config.query_stash`, with what the adapter's own section sets on top of it. A section only
       # holds what the user set, so an option it has, even a `false` or a `nil`, is the user's choice.
+      #: (singleton(Base) adapter, untyped config) -> untyped
       def options_for(adapter, config)
         root = config.query_stash
         own = root[adapter.name.to_s.demodulize.underscore.to_sym] || {}
@@ -40,6 +42,9 @@ module QueryStash
       end
     end
 
+    # What follows is Rails' own DSL: it runs blocks with another `self` and reaches methods that are
+    # added at runtime, so there is nothing for Steep to check it against.
+    # steep:ignore:start
     config.before_configuration do
       config.query_stash = ActiveSupport::OrderedOptions.new.update(
         enabled: true,
@@ -116,5 +121,6 @@ module QueryStash
         )
       end
     end
+    # steep:ignore:end
   end
 end

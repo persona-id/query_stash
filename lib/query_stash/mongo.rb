@@ -6,17 +6,42 @@ require_relative "base"
 
 module QueryStash
   class Mongo < Base
+    # What the patch and `wrap` ask of the driver's own objects.
+    #
+    # @rbs!
+    #   # Has a name: a collection, or a database.
+    #   interface _Named
+    #     def name: () -> String
+    #   end
+    #
+    #   # A `Mongo::Collection::View`, or an aggregation view.
+    #   interface _View
+    #     def collection: () -> _Named
+    #
+    #     def database: () -> _Named
+    #
+    #     def filter: () -> untyped
+    #
+    #     def options: () -> Hash[Symbol, untyped]
+    #
+    #     def each: () ?{ (untyped document) -> untyped } -> untyped
+    #   end
+    #
+    #   # A selector to match rules against.
+    #   type selector = Hash[Symbol, untyped]
+
     # ---------------- Constants ----------------
     # Wildcard sentinel for selector patterns
-    ANY = Object.new.freeze
+    ANY = Object.new.freeze #: Object
 
-    class MongoFilterRegistry < Registry
+    class MongoFilterRegistry < Base::Registry
       private
 
       # Pattern semantics:
       #
       # - ANY sentinel:
       #     pattern.equal?(ANY) => match anything as long as the key exists
+      #: (untyped actual, untyped pattern) -> bool
       def value_matches_pattern?(actual, pattern)
         # Wildcard – anything goes (key presence already checked by caller)
         return true if pattern.equal?(ANY)
@@ -28,31 +53,40 @@ module QueryStash
     # Enables the stash for the duration of each request. `application` is the Rails application the
     # middleware stack belongs to; `app` is the next middleware.
     class Middleware
+      # @rbs @app: _RackApp
+      # @rbs @application: untyped
+
+      #: (_RackApp app, untyped application) -> void
       def initialize(app, application)
         @app = app
         @application = application
       end
 
+      #: (Hash[String, untyped] env) -> untyped
       def call(env)
         QueryStash::Mongo[@application].enable! { @app.call(env) }
       end
     end
 
+    # @rbs module-self _View
     module AdapterPatch
+      #: () ?{ (untyped document) -> untyped } -> untyped
       def each(&block)
         QueryStash::Mongo[Rails.application].wrap(self, block) { |&iterate| super(&iterate) }
       end
     end
 
-    def self.prefix = "mongo"
-
     # Runs the view's cursor through the stash: `cursor` iterates the view's documents into the block
-    # it is given, and `consumer` is the block `each` was called with.
+    # it is given, and `consumer` is the block `each` was called with. (RBS can't say that a block takes
+    # a block, so the parameters of `cursor` are not typed.)
+    #: (_View view, ?(^(untyped) -> untyped)? consumer) { (?) -> untyped } -> untyped
     def wrap(view, consumer = nil, &cursor)
       return cursor.call(&consumer) unless stashing?
 
       # Based off of #cache_options in Mongo::Collection::View::Iterable
       # https://github.com/mongodb/mongo-ruby-driver/blob/v2.19.3/lib/mongo/collection/view/iterable.rb
+      # An aggregation view has a pipeline where the others have a filter.
+      pipelined = view #: untyped
       selector = {
         collection_name: view.collection.name,
         filter: view.filter,
@@ -60,7 +94,7 @@ module QueryStash
         skip: view.options[:skip],
         sort: view.options[:sort],
         projection: view.options[:projection],
-        pipeline: view.respond_to?(:pipeline) ? view.pipeline : nil
+        pipeline: pipelined.respond_to?(:pipeline) ? pipelined.pipeline : nil
       }
 
       rule = registry.match_rule(selector)
@@ -71,7 +105,9 @@ module QueryStash
       cache_key = cache_key_for(view.database.name, selector)
 
       documents = fetch(cache_key, rule) do
-        [].tap { |docs| cursor.call { |doc| docs << doc } }
+        docs = [] #: Array[untyped]
+        cursor.call { |doc| docs << doc }
+        docs
       end
 
       consumer ? documents.each(&consumer) : documents.to_enum
@@ -79,10 +115,12 @@ module QueryStash
 
     private
 
+    #: () -> MongoFilterRegistry
     def build_registry
       MongoFilterRegistry.new
     end
 
+    #: (String cache_key, Base::Registry::Rule rule) { () -> Array[untyped] } -> Array[untyped]
     def fetch(cache_key, rule)
       cache_store = cache_for(rule)
 
@@ -123,6 +161,7 @@ module QueryStash
 
     # Based off of #cache_key from Mongo::QueryCache
     # https://github.com/mongodb/mongo-ruby-driver/blob/master/lib/mongo/query_cache.rb#L19
+    #: (String database_name, selector selector) -> String
     def cache_key_for(database_name, selector)
       raw = [
         selector[:collection_name],

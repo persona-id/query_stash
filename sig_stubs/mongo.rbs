@@ -1,0 +1,16 @@
+# The parts of the Mongo driver and Mongoid the code names. Neither ships types.
+module Mongo
+  class Collection
+    class View
+      module Iterable
+      end
+    end
+  end
+end
+
+module Rails
+  module Mongoid
+    class Railtie
+    end
+  end
+end

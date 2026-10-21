@@ -1,0 +1,24 @@
+# Generated from lib/query_stash/railtie.rb with RBS::Inline
+
+# The railtie is the only part of QueryStash that expects ActiveSupport: it hands the rest what it
+# needs from it, as options of `config.query_stash`.
+module QueryStash
+  class Railtie < Rails::Railtie
+    # The options an adapter can set for itself, in `config.query_stash.active_record` and
+    # `config.query_stash.mongo`. What it does not set, it takes from `config.query_stash`.
+    ADAPTER_OPTIONS: untyped
+
+    # The adapters' sections of `config.query_stash`, which are not options of their own.
+    ADAPTER_SECTIONS: untyped
+
+    # The `adapter` (QueryStash::ActiveRecord or QueryStash::Mongo) for the app's `config`, with
+    # its own options over the ones of `config.query_stash`, and the cache store they name.
+    # : (singleton(Base) adapter, untyped config) -> Base
+    def self.build: (singleton(Base) adapter, untyped config) -> Base
+
+    # `config.query_stash`, with what the adapter's own section sets on top of it. A section only
+    # holds what the user set, so an option it has, even a `false` or a `nil`, is the user's choice.
+    # : (singleton(Base) adapter, untyped config) -> untyped
+    def self.options_for: (singleton(Base) adapter, untyped config) -> untyped
+  end
+end

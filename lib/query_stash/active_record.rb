@@ -5,10 +5,37 @@ require_relative "base"
 
 module QueryStash
   class ActiveRecord < Base
-    CACHEABLE_SQL_REGEX = /\ASELECT/i
+    # What the patches ask of Rails' own objects.
+    #
+    # @rbs!
+    #   # An adapter, up to Rails 8.1.
+    #   interface _InternalExecQueryAdapter
+    #     def internal_exec_query: (String sql, ?String name, ?Array[untyped] binds, **untyped) -> ::ActiveRecord::Result
+    #   end
+    #
+    #   # An adapter, from Rails 8.2.
+    #   interface _IntentAdapter
+    #     def execute_intent: (_QueryIntent intent) -> untyped
+    #
+    #     def cast_result: (untyped raw_result) -> ::ActiveRecord::Result
+    #   end
+    #
+    #   # A query, from Rails 8.2.
+    #   interface _QueryIntent
+    #     def raw_sql: () -> String
+    #
+    #     def has_binds?: () -> bool
+    #
+    #     def deliver_result: (::ActiveRecord::Result result) -> untyped
+    #
+    #     def cast_result: () -> ::ActiveRecord::Result
+    #   end
+
+    CACHEABLE_SQL_REGEX = /\ASELECT/i #: Regexp
     private_constant :CACHEABLE_SQL_REGEX
 
-    class SqlRegistry < Registry
+    class SqlRegistry < Base::Registry
+      # @rbs override
       def add_rule(regex, ...)
         raise Error, "Regex must be a Regexp, got #{regex.class}" if regex.class != Regexp
 
@@ -19,19 +46,26 @@ module QueryStash
     # Enables the stash for the duration of each request. `application` is the Rails application the
     # middleware stack belongs to; `app` is the next middleware.
     class Middleware
+      # @rbs @app: _RackApp
+      # @rbs @application: untyped
+
+      #: (_RackApp app, untyped application) -> void
       def initialize(app, application)
         @app = app
         @application = application
       end
 
+      #: (Hash[String, untyped] env) -> untyped
       def call(env)
         QueryStash::ActiveRecord[@application].enable! { @app.call(env) }
       end
     end
 
     # Rails 7.2 to 8.1 run every query through `internal_exec_query`.
+    # @rbs module-self _InternalExecQueryAdapter
     module AdapterPatch
-      def internal_exec_query(sql, name = "SQL", binds = [], ...)
+      # @rbs override
+      def internal_exec_query(sql, name = "SQL", binds = [], ...) # steep:ignore UnannotatedEmptyCollection
         QueryStash::ActiveRecord[Rails.application].wrap(sql, binds) { super(sql, name, binds, ...) }
       end
     end
@@ -40,7 +74,9 @@ module QueryStash
     # back to the intent, which turns it into an ActiveRecord::Result in `QueryIntent#cast_result`. So a
     # stash hit is delivered to the intent in place of running it, and a miss is stored once the intent
     # has cast its result.
+    # @rbs module-self _IntentAdapter
     module IntentAdapterPatch
+      #: (_QueryIntent intent) -> untyped
       def execute_intent(intent)
         cached_result = QueryStash::ActiveRecord[Rails.application].read_intent(intent)
         return super if cached_result.nil?
@@ -51,19 +87,23 @@ module QueryStash
       private
 
       # A stash hit is delivered as the ActiveRecord::Result it already is.
+      #: (untyped raw_result) -> ::ActiveRecord::Result
       def cast_result(raw_result)
         raw_result.is_a?(::ActiveRecord::Result) ? raw_result : super
       end
     end
 
+    # @rbs module-self _QueryIntent
     module IntentPatch
+      #: () -> ::ActiveRecord::Result
       def cast_result
         super.tap { |result| QueryStash::ActiveRecord[Rails.application].write_intent(self, result) }
       end
     end
 
-    def self.prefix = "active-record"
+    # @rbs @intent_rules: ObjectSpace::WeakMap[_QueryIntent, Base::Registry::Rule]
 
+    # @rbs override
     def initialize(...)
       super
       # The rule each intent that missed the stash is to be stored under, until its result is cast.
@@ -72,6 +112,7 @@ module QueryStash
 
     # Runs the query through the stash, or just yields when the stash is off or the query isn't
     # stashable.
+    #: (String sql, Array[untyped]? binds) { () -> ::ActiveRecord::Result } -> ::ActiveRecord::Result
     def wrap(sql, binds)
       rule = rule_for(sql, binds&.any?)
       return yield unless rule
@@ -84,6 +125,7 @@ module QueryStash
 
     # The stashed result of an intent (see IntentAdapterPatch), or nil: when there is none, the intent is
     # remembered for `write_intent` to store its result.
+    #: (_QueryIntent intent) -> ::ActiveRecord::Result?
     def read_intent(intent)
       rule = rule_for(intent.raw_sql, intent.has_binds?)
       return unless rule
@@ -92,6 +134,7 @@ module QueryStash
     end
 
     # Stores the result of an intent `read_intent` found nothing for.
+    #: (_QueryIntent intent, ::ActiveRecord::Result result) -> untyped
     def write_intent(intent, result)
       rule = @intent_rules[intent]
       return unless rule
@@ -102,12 +145,14 @@ module QueryStash
 
     private
 
+    #: () -> SqlRegistry
     def build_registry
       SqlRegistry.new
     end
 
     # The rule the query is stashed under, or nil when it isn't to be stashed: the stash is off, it has
     # binds (not supported), it is not a SELECT, or no rule matches it.
+    #: (String sql, bool? has_binds) -> Base::Registry::Rule?
     def rule_for(sql, has_binds)
       return unless stashing?
       return if has_binds
@@ -117,6 +162,7 @@ module QueryStash
       rule if rule && (rule.enabled.nil? || rule.enabled.call)
     end
 
+    #: (Base::Registry::Rule rule, String sql) -> ::ActiveRecord::Result?
     def read(rule, sql)
       cache_key = cache_key_for(sql)
       cache_store = cache_for(rule)
@@ -143,6 +189,7 @@ module QueryStash
       nil
     end
 
+    #: (Base::Registry::Rule rule, String sql, ::ActiveRecord::Result result) -> untyped
     def write(rule, sql, result)
       ttl_seconds = rule.ttl_seconds_for(result)
       ttl_jitter_seconds = rule.ttl_jitter_seconds_for(result)
@@ -159,6 +206,7 @@ module QueryStash
       end
     end
 
+    #: (String sql) -> String
     def cache_key_for(sql)
       # Note that the SQL is already normalized by the adapter here.
       #

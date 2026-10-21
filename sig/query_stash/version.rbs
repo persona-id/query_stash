@@ -1,0 +1,5 @@
+# Generated from lib/query_stash/version.rb with RBS::Inline
+
+module QueryStash
+  VERSION: String
+end

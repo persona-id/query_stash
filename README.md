@@ -351,6 +351,35 @@ DATABASE_URL=mongodb://127.0.0.1:27017/query_stash_test bundle exec rspec
 Examples tagged `database: :active_record` or `database: :mongo` only run
 against that kind of database.
 
+### Types
+
+The types are annotations in `lib/` ([rbs-inline](https://github.com/soutaro/rbs-inline)),
+checked with [Steep](https://github.com/soutaro/steep), and exported to `sig/`
+for the people who use the gem. Never edit `sig/` by hand:
+
+```sh
+bundle exec rbs collection init      # once: writes the (git-ignored) rbs_collection.yaml
+bundle exec rbs collection install   # once: the types of the gems we call into
+bundle exec rake sig:export          # lib/ annotations -> sig/
+bundle exec rake types               # sig/ is up to date, and steep check passes
+```
+
+Every file in `lib/` is exported (`rbs-inline --opt-out`, which the Rake tasks use), so a new
+file has signatures from the start, `untyped` ones until it is annotated. A file can opt out with
+`# rbs_inline: disabled`.
+
+CI runs the last one (`rake sig:verify`, then `steep check`), so a change to an
+annotation has to come with the re-exported `sig/`.
+
+- `sig_stubs/` has what neither the annotations nor the collection cover: a few
+  parts of the Mongo driver and Rails.
+- The Rails DSL in `lib/query_stash/railtie.rb` is not type checked
+  (`# steep:ignore`): Rails runs those blocks with another `self`, and the
+  collection has no types for them.
+- Annotate with `#: (String) -> Integer` above a `def`. Multi-line types need
+  `# @rbs param: Type` lines instead, and `Data.define` blocks are not read, so
+  reopen the class to add methods (see `Registry::Rule`).
+
 ## License
 
 Available as open source under the terms of the

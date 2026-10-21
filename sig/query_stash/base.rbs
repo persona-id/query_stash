@@ -1,0 +1,224 @@
+# Generated from lib/query_stash/base.rb with RBS::Inline
+
+module QueryStash
+  class Base
+    class Registry
+      # How long a result is kept: a number of seconds, or something that works it out from the result.
+      type ttl = _ToI | ^(untyped result) -> _ToI
+
+      # Called with the rule and the result.
+      type callback = ^(Rule rule, untyped result) -> untyped
+
+      class Rule < Data
+        attr_reader selector(): untyped
+
+        attr_reader name(): String
+
+        attr_reader ttl_seconds(): ttl
+
+        attr_reader ttl_jitter_seconds(): ttl
+
+        attr_reader on_cache_hit(): callback?
+
+        attr_reader on_cache_miss(): callback?
+
+        attr_reader on_cache_skip(): callback?
+
+        attr_reader enabled(): (^() -> boolish)?
+
+        attr_reader store(): _CacheStore?
+
+        def self.new: (untyped selector, String name, ttl ttl_seconds, ttl ttl_jitter_seconds, callback? on_cache_hit, callback? on_cache_miss, callback? on_cache_skip, (^() -> boolish)? enabled, _CacheStore? store) -> instance
+                    | (selector: untyped, name: String, ttl_seconds: ttl, ttl_jitter_seconds: ttl, on_cache_hit: callback?, on_cache_miss: callback?, on_cache_skip: callback?, enabled: (^() -> boolish)?, store: _CacheStore?) -> instance
+
+        def self.members: () -> [ :selector, :name, :ttl_seconds, :ttl_jitter_seconds, :on_cache_hit, :on_cache_miss, :on_cache_skip, :enabled, :store ]
+
+        def members: () -> [ :selector, :name, :ttl_seconds, :ttl_jitter_seconds, :on_cache_hit, :on_cache_miss, :on_cache_skip, :enabled, :store ]
+      end
+
+      class Rule
+        # The seconds a result is kept for, for `result`.
+        # : (untyped result) -> Integer
+        def ttl_seconds_for: (untyped result) -> Integer
+
+        # The jitter added to that, for `result`.
+        # : (untyped result) -> Integer
+        def ttl_jitter_seconds_for: (untyped result) -> Integer
+      end
+
+      @rules: Array[Rule]
+
+      attr_reader rules: Array[Rule]
+
+      # : () -> void
+      def initialize: () -> void
+
+      # @rbs selector: untyped
+      # @rbs name: String
+      # @rbs ttl_seconds: ttl
+      # @rbs ttl_jitter_seconds: ttl
+      # @rbs on_cache_hit: callback?
+      # @rbs on_cache_miss: callback?
+      # @rbs on_cache_skip: callback?
+      # @rbs enabled: (^() -> boolish)?
+      # @rbs store: _CacheStore?
+      # @rbs return: Array[Rule]
+      def add_rule: (untyped selector, name: String, ttl_seconds: ttl, ttl_jitter_seconds: ttl, ?on_cache_hit: callback?, ?on_cache_miss: callback?, ?on_cache_skip: callback?, ?enabled: (^() -> boolish)?, ?store: _CacheStore?) -> Array[Rule]
+
+      # : (String name) -> Array[Rule]
+      def delete_rule: (String name) -> Array[Rule]
+
+      # Selector / options / collection-based lookup
+      # : (untyped selector) -> Rule?
+      def match_rule: (untyped selector) -> Rule?
+
+      private
+
+      # Pattern matching for hashes.
+      #
+      # `pattern` is a subset / pattern-form of `full`:
+      # - wildcards and special values are interpreted via value_matches_pattern?
+      #
+      # : (Hash[untyped, untyped] full, Hash[untyped, untyped] pattern) -> bool
+      def hash_matches_pattern?: (Hash[untyped, untyped] full, Hash[untyped, untyped] pattern) -> bool
+
+      # Pattern semantics:
+      #
+      # - Proc:
+      #     pattern.call(actual) must be truthy
+      # - Regexp:
+      #     actual.to_s must match pattern
+      # - Hash:
+      #     pattern is a nested hash pattern, recurse
+      # - Array:
+      #     pattern is a "prefix" array pattern:
+      #       - pattern length <= actual length
+      #       - each element is matched via value_matches_pattern?
+      # - Fallback:
+      #     actual == pattern
+      #
+      # : (untyped actual, untyped pattern) -> bool
+      def value_matches_pattern?: (untyped actual, untyped pattern) -> bool
+    end
+
+    # Where `enable!` and `disable!` keep what they set, when no `isolated_state` is
+    # given: a hash in a thread variable, so every fiber of a thread sees the same values and
+    # other threads see none.
+    #
+    # An isolated state is any object that responds to `[]`, `[]=`, `key?` and `delete`, like
+    # `ActiveSupport::IsolatedExecutionState`.
+    class ThreadVariableState
+      THREAD_VARIABLE: Symbol
+
+      # : (untyped key) -> untyped
+      def []: (untyped key) -> untyped
+
+      # : (untyped key, untyped value) -> untyped
+      def []=: (untyped key, untyped value) -> untyped
+
+      # : (untyped key) -> bool
+      def key?: (untyped key) -> bool
+
+      # : (untyped key) -> untyped
+      def delete: (untyped key) -> untyped
+
+      private
+
+      # : () -> Hash[untyped, untyped]
+      def values: () -> Hash[untyped, untyped]
+    end
+
+    # Used when no `instrumenter` is given: runs the block and tells no one.
+    class NullInstrumenter
+      # : (String _name, ?Hash[Symbol, untyped] payload) ?{ (Hash[Symbol, untyped]) -> untyped } -> untyped
+      def instrument: (String _name, ?Hash[Symbol, untyped] payload) ?{ (Hash[Symbol, untyped]) -> untyped } -> untyped
+    end
+
+    # Used when no `error_reporter` is given.
+    class WarnErrorReporter
+      # : (Exception error, ?handled: bool) -> void
+      def report: (Exception error, ?handled: bool) -> void
+    end
+
+    self.@instances: Concurrent::Map[untyped, untyped]
+
+    # : (Class subclass) -> void
+    def self.inherited: (Class subclass) -> void
+
+    # : (untyped app) -> instance
+    def self.[]: (untyped app) -> instance
+
+    # Makes `stash` the instance `app` uses.
+    # : (untyped app, instance stash) -> instance
+    def self.set: (untyped app, instance stash) -> instance
+
+    @cache: _CacheStore
+
+    @registry: Registry
+
+    @raise_on_cache_error: bool
+
+    @error_reporter: _ErrorReporter
+
+    @instrumenter: _Instrumenter
+
+    @isolated_state: _IsolatedState
+
+    @enabled: bool
+
+    attr_reader registry: Registry
+
+    attr_reader cache: _CacheStore
+
+    attr_reader enabled: bool
+
+    # What each stash is given:
+    #
+    # - `enabled`: whether queries are stashed outside of `enable!` and `disable!`.
+    # - `isolated_state`: where those keep what they set. By default, a thread variable.
+    # - `instrumenter`: told about what the stash does. By default, no one.
+    # - `error_reporter`: told about the errors it handles. By default, a warning on stderr.
+    # - `raise_on_cache_error`: raise the errors of the cache store, instead of reporting them.
+    # - `cache_store`: where results are kept, any object that responds to `read(key)`,
+    #   `write(key, value, expires_in:)` and `clear`, like an ActiveSupport cache store.
+    #
+    # @rbs cache_store: _CacheStore
+    # @rbs enabled: bool
+    # @rbs isolated_state: _IsolatedState?
+    # @rbs instrumenter: _Instrumenter?
+    # @rbs error_reporter: _ErrorReporter?
+    # @rbs raise_on_cache_error: bool
+    # @rbs return: void
+    def initialize: (cache_store: _CacheStore, ?enabled: bool, ?isolated_state: _IsolatedState?, ?instrumenter: _Instrumenter?, ?error_reporter: _ErrorReporter?, ?raise_on_cache_error: bool) -> void
+
+    # : () { (Registry registry) -> void } -> void
+    def configure: () { (Registry registry) -> void } -> void
+
+    # Turn the stash on or off for the block. Outside of either, it follows `enabled`.
+    # : [T] () { () -> T } -> T
+    def enable!: [T] () { () -> T } -> T
+
+    # : [T] () { () -> T } -> T
+    def disable!: [T] () { () -> T } -> T
+
+    # : (Registry::Rule rule) -> _CacheStore
+    def cache_for: (Registry::Rule rule) -> _CacheStore
+
+    private
+
+    # Whether the stash is on for the current execution context: what `enable!` or `disable!` set
+    # there, or else `enabled`.
+    # : () -> bool
+    def stashing?: () -> bool
+
+    # Sets the stash on or off in the isolated state for the block, then puts back what was there.
+    # : [T] (bool value) { () -> T } -> T
+    def isolate: [T] (bool value) { () -> T } -> T
+
+    # : () -> Registry
+    def build_registry: () -> Registry
+
+    # : [T] () { () -> T } -> untyped
+    def rescue_cache_error: [T] () { () -> T } -> untyped
+  end
+end
