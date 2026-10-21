@@ -9,6 +9,9 @@ Style/StringLiterals:
 Style/StringLiteralsInInterpolation:
   EnforcedStyle: double_quotes
 
+Style/AccessorGrouping:
+  Enabled: false
+
 Metrics:
   Enabled: false
 

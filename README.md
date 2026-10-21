@@ -214,7 +214,22 @@ Cache errors never fail the query: the read falls back to the database and a fai
 
 ## Without Rails
 
-Outside of rails, you must set your application stash manually. A query stashrequires a cache store (any object with `read`, `write(key, value, expires_in:)` and `clear`), an isolated state, an instrumenter and an error reporter. Without the last three, it keeps its state in a thread variable, does not instrument and warns on stderr.
+Outside of rails, you must set your application stash manually, from the options the railtie would otherwise
+read from `config.query_stash`:
+
+```ruby
+QueryStash::ActiveRecord.set(
+  app,
+  QueryStash::ActiveRecord.new(
+    cache_store: MyCache.new,  # required: any object with `read`, `write(key, value, expires_in:)` and `clear`
+    enabled: true,
+    isolated_state: MyApp::CurrentContext,  # `[]`, `[]=`, `key?` and `delete`; by default, a thread variable
+    instrumenter: MyApp::Instrumenter,      # `instrument(name, payload) { ... }`; by default, no one
+    error_reporter: MyApp::Errors,          # `report(error, handled: true)`; by default, a warning on stderr
+    raise_on_cache_error: false
+  )
+)
+```
 
 ## Why this repo has history from before it existed
 

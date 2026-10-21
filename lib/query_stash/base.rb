@@ -130,8 +130,8 @@ module QueryStash
       end
     end
 
-    # Where `enable!` and `disable!` keep what they set, when `config.query_stash.isolated_state` is
-    # not given: a hash in a thread variable, so every fiber of a thread sees the same values and
+    # Where `enable!` and `disable!` keep what they set, when no `isolated_state` is
+    # given: a hash in a thread variable, so every fiber of a thread sees the same values and
     # other threads see none.
     #
     # An isolated state is any object that responds to `[]`, `[]=`, `key?` and `delete`, like
@@ -163,14 +163,14 @@ module QueryStash
       end
     end
 
-    # Used when `config.query_stash.instrumenter` is not given: runs the block and tells no one.
+    # Used when no `instrumenter` is given: runs the block and tells no one.
     class NullInstrumenter
       def instrument(_name, payload = {})
         yield payload if block_given?
       end
     end
 
-    # Used when `config.query_stash.error_reporter` is not given.
+    # Used when no `error_reporter` is given.
     class WarnErrorReporter
       def report(error, handled: true) # rubocop:disable Lint/UnusedMethodArgument
         warn("QueryStash: #{error.class}: #{error.message}")
@@ -193,21 +193,35 @@ module QueryStash
       end
     end
 
-    attr_reader :registry, :cache, :enabled
+    attr_reader :registry
 
-    # `config` is the Rails application's config; the stash reads `config.query_stash`.
+    attr_reader :cache
+
+    attr_reader :enabled
+
+    # What each stash is given:
     #
-    # `cache_store` is where results are kept: any object that responds to `read(key)`,
-    # `write(key, value, expires_in:)` and `clear`, like an ActiveSupport cache store. It is not
-    # `config.query_stash.cache_store`, which names a store and is turned into one by the railtie.
-    def initialize(config, cache_store:)
-      options = config.query_stash
-
-      @enabled = options.enabled
-      @isolated_state = options.isolated_state || ThreadVariableState.new
-      @instrumenter = options.instrumenter || NullInstrumenter.new
-      @error_reporter = options.error_reporter || WarnErrorReporter.new
-      @raise_on_cache_error = options.raise_on_cache_error
+    # - `enabled`: whether queries are stashed outside of `enable!` and `disable!`.
+    # - `isolated_state`: where those keep what they set. By default, a thread variable.
+    # - `instrumenter`: told about what the stash does. By default, no one.
+    # - `error_reporter`: told about the errors it handles. By default, a warning on stderr.
+    # - `raise_on_cache_error`: raise the errors of the cache store, instead of reporting them.
+    # - `cache_store`: where results are kept, any object that responds to `read(key)`,
+    #   `write(key, value, expires_in:)` and `clear`, like an ActiveSupport cache store.
+    #
+    def initialize(
+      cache_store:,
+      enabled: true,
+      isolated_state: nil,
+      instrumenter: nil,
+      error_reporter: nil,
+      raise_on_cache_error: false
+    )
+      @enabled = enabled
+      @isolated_state = isolated_state || ThreadVariableState.new
+      @instrumenter = instrumenter || NullInstrumenter.new
+      @error_reporter = error_reporter || WarnErrorReporter.new
+      @raise_on_cache_error = raise_on_cache_error
       @registry = build_registry
       @cache = cache_store
     end

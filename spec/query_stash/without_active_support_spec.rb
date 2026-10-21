@@ -20,15 +20,11 @@ RSpec.describe "QueryStash without ActiveSupport" do
         def clear = @entries.clear
       end
 
-      options = Struct.new(:enabled, :isolated_state, :instrumenter, :error_reporter, :raise_on_cache_error,
-                           keyword_init: true).new(enabled: false, raise_on_cache_error: true)
-      config = Struct.new(:query_stash).new(options)
-
       View = Struct.new(:collection, :database, :filter, :options)
       view = View.new(Struct.new(:name).new("accounts"), Struct.new(:name).new("test_db"),
                       { "token" => "abc" }, { limit: nil, skip: nil, sort: nil, projection: nil })
 
-      mongo = QueryStash::Mongo.new(config, cache_store: FakeStore.new)
+      mongo = QueryStash::Mongo.new(cache_store: FakeStore.new, enabled: false, raise_on_cache_error: true)
       mongo.registry.add_rule({ collection_name: "accounts" }, name: "accounts", ttl_seconds: 60, ttl_jitter_seconds: 0)
       runs = 0
       read = lambda do
@@ -43,7 +39,7 @@ RSpec.describe "QueryStash without ActiveSupport" do
       runs = 0
       inside = mongo.enable! { [read.call, read.call, runs] }
 
-      sql = QueryStash::ActiveRecord.new(config, cache_store: FakeStore.new)
+      sql = QueryStash::ActiveRecord.new(cache_store: FakeStore.new, enabled: false, raise_on_cache_error: true)
       sql.registry.add_rule(/SELECT/, name: "selects", ttl_seconds: 60, ttl_jitter_seconds: 0)
       binds = sql.enable! { sql.wrap("SELECT 1", ["bind"]) { :db } }
 

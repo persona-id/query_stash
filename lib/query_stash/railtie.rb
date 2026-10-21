@@ -22,11 +22,12 @@ module QueryStash
       # its own options over the ones of `config.query_stash`, and the cache store they name.
       def build(adapter, config)
         options = options_for(adapter, config)
-        # What the stash reads of its config: `query_stash`, with the options in it.
-        adapter_config = ActiveSupport::OrderedOptions.new.update(query_stash: options)
 
-        # Takes the same values as Rails' `config.cache_store`.
-        adapter.new(adapter_config, cache_store: ActiveSupport::Cache.lookup_store(*Array(options.cache_store)))
+        # `cache_store` takes the same values as Rails' `config.cache_store`.
+        adapter.new(
+          **options.slice(:enabled, :isolated_state, :instrumenter, :error_reporter, :raise_on_cache_error),
+          cache_store: ActiveSupport::Cache.lookup_store(*Array(options.cache_store))
+        )
       end
 
       # `config.query_stash`, with what the adapter's own section sets on top of it. A section only
