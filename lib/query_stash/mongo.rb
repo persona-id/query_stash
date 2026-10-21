@@ -103,22 +103,19 @@ module QueryStash
         end
       end
 
-      result = yield
-
-      rescue_cache_error do
+      yield.tap do |result|
         ttl_seconds = rule.ttl_seconds_for(result)
-
         ttl_jitter_seconds = rule.ttl_jitter_seconds_for(result)
 
-        if ttl_seconds.positive?
-          rule.on_cache_miss&.call(rule, result)
-          cache_store.write(cache_key, result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
-        else
-          rule.on_cache_skip&.call(rule, result)
+        rescue_cache_error do
+          if ttl_seconds.positive?
+            rule.on_cache_miss&.call(rule, result)
+            cache_store.write(cache_key, result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
+          else
+            rule.on_cache_skip&.call(rule, result)
+          end
         end
       end
-
-      result
     end
 
     # Based off of #cache_key from Mongo::QueryCache

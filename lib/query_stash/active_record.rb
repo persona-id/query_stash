@@ -75,11 +75,10 @@ module QueryStash
       end
 
       yield.tap do |result|
+        ttl_seconds = rule.ttl_seconds_for(result)
+        ttl_jitter_seconds = rule.ttl_jitter_seconds_for(result)
+
         rescue_cache_error do
-          ttl_seconds = rule.ttl_seconds_for(result)
-
-          ttl_jitter_seconds = rule.ttl_jitter_seconds_for(result)
-
           if ttl_seconds.positive?
             rule.on_cache_miss&.call(rule, result)
             cache_store.write(cache_key, result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
