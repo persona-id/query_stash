@@ -80,6 +80,10 @@ module QueryStash
       ActiveSupport.on_load(:active_record) do
         require_relative "active_record"
 
+        if ::ActiveRecord::ConnectionAdapters.const_defined?(:QueryIntent)
+          ::ActiveRecord::ConnectionAdapters::QueryIntent.prepend(QueryStash::ActiveRecord::IntentPatch)
+        end
+
         %i[
           active_record_sqlite3adapter
           active_record_postgresqladapter
@@ -87,7 +91,9 @@ module QueryStash
           active_record_trilogyadapter
         ].each do |hook|
           ActiveSupport.on_load(hook) do
-            prepend QueryStash::ActiveRecord::AdapterPatch
+            # Rails 8.2 runs queries as intents, earlier versions through `internal_exec_query`.
+            patch = method_defined?(:execute_intent) ? :IntentAdapterPatch : :AdapterPatch
+            prepend QueryStash::ActiveRecord.const_get(patch)
           end
         end
       end

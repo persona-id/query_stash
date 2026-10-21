@@ -36,7 +36,9 @@ RSpec.describe "QueryStash::ActiveRecord against the dummy app's database", data
   end
 
   it "patches the adapter the app connects with" do
-    expect(Post.connection.class.ancestors).to include(QueryStash::ActiveRecord::AdapterPatch)
+    patch = Post.connection.class.method_defined?(:execute_intent) ? :IntentAdapterPatch : :AdapterPatch
+
+    expect(Post.connection.class.ancestors).to include(QueryStash::ActiveRecord.const_get(patch))
   end
 
   it "serves repeated lookups of a published row from the stash" do
@@ -49,6 +51,16 @@ RSpec.describe "QueryStash::ActiveRecord against the dummy app's database", data
 
     expect(lookups(post.id)).to eq(1)
     expect(hits).to eq([{ adapter: :active_record, rule: "post_by_id" }])
+  end
+
+  it "stores a row once, and does not refresh it when it is served from the stash" do
+    post = Post.create!(status: "published", title: "Hello")
+    stash = QueryStash::ActiveRecord[Rails.application]
+    allow(stash.cache).to receive(:write).and_call_original
+
+    stash.enable! { 3.times { Post.find(post.id) } }
+
+    expect(stash.cache).to have_received(:write).once
   end
 
   it "does not cache rows the TTL callable skips" do

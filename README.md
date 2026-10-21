@@ -1,13 +1,10 @@
 # QueryStash
 
-Cross-request query result caching for ActiveRecord and MongoDB, for the
-handful of hot, slow-changing lookups you choose.
+Cross-request query result caching for the handful of hot, slow-changing lookups you choose.
 
-Rails' query cache lives for one request. QueryStash keeps the result of an
-allowlisted query across requests and jobs, for a TTL you compute from the
-result itself, in an ActiveSupport cache store of your choosing. It hooks
-the database adapter (and the Mongo driver), so call sites don't change:
-`Organization.find(id)` is served from the stash when a rule matches it.
+Currently shipping with adapters for [activerecord](https://rubygems.org/gems/activerecord) and [mongo](https://rubygems.org/gems/mongo).
+
+QueryStash can keep the result of an allowlisted query across requests and jobs, for a TTL you compute from the result itself, in a store of your choosing. It hooks the database adapter (and the Mongo driver), so call sites don't need to change: `Organization.find(id)` is served from the stash when a rule matches it.
 
 ```ruby
 QueryStash::ActiveRecord[Rails.application].configure do |rules|
@@ -20,32 +17,20 @@ QueryStash::ActiveRecord[Rails.application].configure do |rules|
 end
 ```
 
-It ran in production at [Persona](https://withpersona.com) as
-`ProcessQueryCache` from October 2025 before it was extracted into this gem.
+This gem was extracted from code we've been running in production at [Persona](https://withpersona.com).
 
 ## When to use it, and when not to
 
-Use it for point lookups that are read far more often than they change, and
-where a bounded amount of staleness is acceptable: tenants, plans, API key
-lookups, published (immutable) versions of things.
+Use it for point lookups that are read far more often than they change, and where a bounded amount of staleness is acceptable.
 
-Know what it does not do:
+What it does not do:
 
-- **No invalidation.** Entries leave on TTL (plus jitter) or eviction. A
-  write does not clear the stash, so a read after a write can return the
-  old row until the TTL runs out. Wrap read-after-write code in
-  `disable!`, or don't stash those queries.
-- **Inlined SQL only.** Queries with bind parameters are passed through
-  untouched. Use an adapter or configuration that inlines values (Trilogy
-  and mysql2 do by default; set `prepared_statements: false` for SQLite or
-  PostgreSQL).
-- **`SELECT` only**, matched with `/\ASELECT/i`. SQL that starts with a
-  comment, whitespace or a `WITH` clause is never stashed.
-- **Not transaction-aware.** A matching read inside a transaction can be
-  served from the stash instead of seeing the transaction's own writes.
+- **No invalidation.** Entries leave on TTL (plus jitter) or eviction. A write does not clear the stash, so a read after a write can return the old row until the TTL runs out. Wrap read-after-write code in `disable!`, or don't stash those queries.
+- **Inlined SQL only.** Queries with bind parameters are passed through untouched. Use an adapter or configuration that inlines values (Trilogy and mysql2 do by default; set `prepared_statements: false` for SQLite or PostgreSQL).
+- **`SELECT` only**, matched with `/\ASELECT/i`. SQL that starts with a comment, whitespace or a `WITH` clause is never stashed.
+- **Not transaction-aware.** A matching read inside a transaction can be served from the stash instead of seeing the transaction's own writes.
 - **`load_async` queries bypass it.**
-- The ActiveRecord cache key is the SQL plus `ActiveRecord::Base.current_shard`.
-  It does not include the role or the database name.
+- The ActiveRecord cache key is the SQL plus `ActiveRecord::Base.current_shard`. It does not include the role or the database name.
 
 ## Installation
 
@@ -53,12 +38,16 @@ Know what it does not do:
 bundle add query_stash
 ```
 
-The railtie loads the adapter for each framework your app uses, ActiveRecord
-and Mongoid, when that framework loads.
+The railtie loads the adapter for each framework your app uses, ActiveRecord and Mongoid, when that framework loads.
 
 ActiveRecord 7.2, 8.0 and 8.1 and Ruby 3.3 through 4.0 are tested in CI,
 against SQLite, PostgreSQL, MySQL and MongoDB (through Mongoid). The Mongo
 adapter targets the 2.19 driver.
+
+Rails main (8.2, which runs queries as intents, and no longer through
+`internal_exec_query`) and Ruby head are tested too, but a failure there does
+not fail the build. Rails 8.2 is supported through `QueryIntent`, an internal
+class, so expect it to need changes until 8.2 is released.
 
 ## Usage
 

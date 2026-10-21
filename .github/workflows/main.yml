@@ -14,6 +14,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     name: Ruby ${{ matrix.ruby }} / ${{ matrix.gemfile }} / ${{ matrix.db }}
+    # Ruby head and Rails main move under us: a break there is worth seeing, but is not ours to block on.
+    continue-on-error: ${{ matrix.ruby == 'head' || matrix.gemfile == 'gemfiles/activerecord_main.gemfile' }}
     services:
       postgres:
         image: postgres:17
@@ -44,11 +46,13 @@ jobs:
           - '3.3'
           - '3.4'
           - '4.0'
+          - head
         gemfile:
           - Gemfile
           - gemfiles/activerecord_7_2.gemfile
           - gemfiles/activerecord_8_0.gemfile
           - gemfiles/activerecord_8_1.gemfile
+          - gemfiles/activerecord_main.gemfile
         db:
           - sqlite3
           - postgresql
