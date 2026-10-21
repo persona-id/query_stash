@@ -91,7 +91,9 @@ RSpec.describe QueryStash::Base do
 
       2.times { stash.wrap(sql, []) { :db } }
 
-      expect(events.map(&:first)).to eq(%w[cache_read.query_stash cache_read.query_stash cache_hit.query_stash])
+      expect(events.map(&:first)).to eq(
+        %w[cache_read.query_stash cache_miss.query_stash cache_read.query_stash cache_hit.query_stash]
+      )
     end
 
     it "defaults to running the block without telling anyone, when there is none" do

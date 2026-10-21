@@ -149,9 +149,11 @@ module QueryStash
 
       rescue_cache_error do
         if ttl_seconds.positive?
+          @instrumenter.instrument("cache_miss.query_stash", adapter: :active_record, rule: rule.name)
           rule.on_cache_miss&.call(rule, result)
           cache_for(rule).write(cache_key_for(sql), result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
         else
+          @instrumenter.instrument("cache_skip.query_stash", adapter: :active_record, rule: rule.name)
           rule.on_cache_skip&.call(rule, result)
         end
       end

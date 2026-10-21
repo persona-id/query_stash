@@ -387,6 +387,12 @@ RSpec.describe QueryStash::Mongo do
           expect(cursor_runs.length).to eq(1)
         end
 
+        it "does not emit cache_hit.query_stash" do
+          registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 60, ttl_jitter_seconds: 0)
+
+          expect(events_of("cache_hit.query_stash") { documents }).to be_empty
+        end
+
         it "hands the documents to the consumer" do
           registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 60, ttl_jitter_seconds: 0)
           received = []
@@ -397,8 +403,71 @@ RSpec.describe QueryStash::Mongo do
         end
       end
 
+      context "when a result is to be stored" do
+        it "emits cache_miss.query_stash right before on_cache_miss" do
+          order = []
+          registry.add_rule(rule_selector, name: "accounts_by_token", on_cache_miss: proc { order << :callback },
+                                           ttl_seconds: 60, ttl_jitter_seconds: 0)
+          ActiveSupport::Notifications.subscribed(->(*, payload) { order << payload }, "cache_miss.query_stash") do
+            documents
+          end
+
+          expect(order).to eq([{ adapter: :mongo, rule: "accounts_by_token" }, :callback])
+        end
+
+        it "does not emit it for a result that is skipped" do
+          registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 0, ttl_jitter_seconds: 0)
+
+          expect(events_of("cache_miss.query_stash") { documents }).to be_empty
+        end
+
+        it "does not emit it for a hit" do
+          registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 60, ttl_jitter_seconds: 0)
+          cache.write(cache_key_for(view), ["cached_doc"])
+
+          expect(events_of("cache_miss.query_stash") { documents }).to be_empty
+        end
+      end
+
+      context "when a result is skipped" do
+        it "emits cache_skip.query_stash right before on_cache_skip" do
+          order = []
+          registry.add_rule(rule_selector, name: "accounts_by_token", on_cache_skip: proc { order << :callback },
+                                           ttl_seconds: 0, ttl_jitter_seconds: 0)
+          ActiveSupport::Notifications.subscribed(->(*, payload) { order << payload }, "cache_skip.query_stash") do
+            documents
+          end
+
+          expect(order).to eq([{ adapter: :mongo, rule: "accounts_by_token" }, :callback])
+        end
+
+        it "does not emit it for a result that is stored" do
+          registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 60, ttl_jitter_seconds: 0)
+
+          expect(events_of("cache_skip.query_stash") { documents }).to be_empty
+        end
+
+        it "does not emit it for a hit" do
+          registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 0, ttl_jitter_seconds: 0)
+          cache.write(cache_key_for(view), ["cached_doc"])
+
+          expect(events_of("cache_skip.query_stash") { documents }).to be_empty
+        end
+      end
+
       context "when cache has the result" do
         before { cache.write(cache_key_for(view), ["cached_doc"]) }
+
+        it "emits cache_hit.query_stash right before on_cache_hit" do
+          order = []
+          registry.add_rule(rule_selector, name: "accounts_by_token", on_cache_hit: proc { order << :callback },
+                                           ttl_seconds: 60, ttl_jitter_seconds: 0)
+          ActiveSupport::Notifications.subscribed(->(*, payload) { order << payload }, "cache_hit.query_stash") do
+            documents
+          end
+
+          expect(order).to eq([{ adapter: :mongo, rule: "accounts_by_token" }, :callback])
+        end
 
         it "returns the cached documents without running the cursor and calls on_cache_hit" do
           called_with_result = nil

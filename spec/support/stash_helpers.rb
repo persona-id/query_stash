@@ -15,6 +15,16 @@ module StashHelpers
     @built_stashes ||= []
   end
 
+  # The payloads of the `name` notifications the block emits.
+  def events_of(name)
+    events = []
+    subscriber = ActiveSupport::Notifications.subscribe(name) { |event| events << event.payload }
+    yield
+    events
+  ensure
+    ActiveSupport::Notifications.unsubscribe(subscriber)
+  end
+
   # The app's own stash, with its rules and default store emptied.
   def reset_app_stash(adapter)
     adapter[Rails.application].tap do |stash|

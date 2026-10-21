@@ -179,9 +179,13 @@ Without one, the stash keeps it in a thread variable: shared by the fibers of a 
 | Event | Payload |
 |---|---|
 | `cache_read.query_stash` | `adapter`, `rule`, `hit` |
-| `cache_hit.query_stash` (ActiveRecord) | `adapter`, `rule` |
+| `cache_hit.query_stash` | `adapter`, `rule` |
+| `cache_miss.query_stash` | `adapter`, `rule` |
+| `cache_skip.query_stash` | `adapter`, `rule` |
 
 A stash hit never reaches the adapter, so it fires no `sql.active_record` event. Subscribe to `cache_hit.query_stash` if you count queries per request.
+
+`cache_miss.query_stash` fires right before `on_cache_miss`, when a result is about to be stored, and `cache_skip.query_stash` right before `on_cache_skip`, when its TTL says not to store it.
 
 The events go to `config.query_stash.instrumenter`, which is `ActiveSupport::Notifications` by default. Any object with `instrument(name, payload) { |payload| ... }` works.
 
