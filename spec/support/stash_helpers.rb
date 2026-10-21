@@ -8,11 +8,17 @@ module StashHelpers
                                                       .update(Rails.application.config.query_stash)
                                                       .update(overrides)
 
-    QueryStash::Railtie.build(adapter, config).tap { |stash| built_stashes << stash }
+    QueryStash::Railtie.build(adapter, config)
   end
 
-  def built_stashes
-    @built_stashes ||= []
+  # The payloads of the `name` notifications the block emits.
+  def events_of(name)
+    events = []
+    subscriber = ActiveSupport::Notifications.subscribe(name) { |event| events << event.payload }
+    yield
+    events
+  ensure
+    ActiveSupport::Notifications.unsubscribe(subscriber)
   end
 
   # The app's own stash, with its rules and default store emptied.
@@ -26,12 +32,4 @@ end
 
 RSpec.configure do |config|
   config.include StashHelpers
-
-  # A file store's background threads outlive the example otherwise.
-  config.after do
-    built_stashes.map(&:cache).each do |store|
-      store.instance_variable_get(:@metrics_thread)&.kill
-      store.instance_variable_get(:@evictor_thread)&.kill
-    end
-  end
 end

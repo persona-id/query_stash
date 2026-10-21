@@ -148,13 +148,32 @@ config.query_stash.cache_store = :redis_cache_store, {
 config.query_stash.cache_store = :file_store, "tmp/query-stash"
 ```
 
-`:file_store` builds a `QueryStash::FileStore`, with the adapter's prefix on the directory's basename: the example above stores ActiveRecord results in `tmp/active-record-query-stash` and Mongo results in `tmp/mongo-query-stash`. Each one locks a file next to its directory (`tmp/active-record-query-stash.lock`) while it cleans up.
-
 - **MemoryStore**: one copy per process, no network hop. Keep `compress: true`; see the history for why.
 - **Redis/Valkey**: shared across processes and hosts. If several environments share one cluster, put the environment in the namespace. The cache key doesn't include it, and two environments with the same database name would otherwise read each other's entries.
-- **`file_store`**: shared by all processes on one machine. A background thread runs `cleanup` every 5 minutes, because FileStore has no LRU and no size cap. Size your rules so the directory can't fill the disk.
+- **`file_store`**: Rails' own, shared by all processes on one machine. It has no LRU and no size cap, and nothing removes the entries that expired until `cleanup` is called on it, so size your rules so the directory can't fill the disk. ActiveRecord and Mongo would share the directory: give each its own with `config.query_stash.active_record.cache_store` and `config.query_stash.mongo.cache_store`.
 
-`QueryStash::ActiveRecord[Rails.application].cache_usage_bytes` (and the same on `QueryStash::Mongo`) reports the size of the store (Redis `used_memory`, refreshed at most once a minute; the file store's own measurement; or the MemoryStore's size).
+### Options per adapter
+
+`config.query_stash.active_record` and `config.query_stash.mongo` (each one
+exists when that framework is loaded) can set `enabled`, `isolated_state`,
+`instrumenter`, `error_reporter` and `cache_store` for their adapter alone.
+Whatever one of them doesn't set, it takes from `config.query_stash`, even if
+that is set after it:
+
+```ruby
+# config/application.rb
+config.query_stash.cache_store = :redis_cache_store, { url: ENV["STASH_REDIS_URL"] }
+config.query_stash.mongo.cache_store = :memory_store, { size: 32.megabytes }
+config.query_stash.active_record.enabled = false
+```
+
+Here ActiveRecord is only stashed inside `enable!` blocks, in the Redis store,
+and Mongo is always stashed, in memory. An option that is set to `false` or
+`nil` in a section counts as set. `raise_on_cache_error` is the same for both,
+and read from `config.query_stash`.
+
+They are read once, before `config/initializers` run, like the rest of
+`config.query_stash`.
 
 ### Threads
 
@@ -179,9 +198,13 @@ Without one, the stash keeps it in a thread variable: shared by the fibers of a 
 | Event | Payload |
 |---|---|
 | `cache_read.query_stash` | `adapter`, `rule`, `hit` |
-| `cache_hit.query_stash` (ActiveRecord) | `adapter`, `rule` |
+| `cache_hit.query_stash` | `adapter`, `rule` |
+| `cache_miss.query_stash` | `adapter`, `rule` |
+| `cache_skip.query_stash` | `adapter`, `rule` |
 
 A stash hit never reaches the adapter, so it fires no `sql.active_record` event. Subscribe to `cache_hit.query_stash` if you count queries per request.
+
+`cache_miss.query_stash` fires right before `on_cache_miss`, when a result is about to be stored, and `cache_skip.query_stash` right before `on_cache_skip`, when its TTL says not to store it.
 
 The events go to `config.query_stash.instrumenter`, which is `ActiveSupport::Notifications` by default. Any object with `instrument(name, payload) { |payload| ... }` works.
 
@@ -191,7 +214,22 @@ Cache errors never fail the query: the read falls back to the database and a fai
 
 ## Without Rails
 
-Outside of rails, you must set your application stash manually. A query stashrequires a cache store (any object with `read`, `write(key, value, expires_in:)` and `clear`), an isolated state, an instrumenter and an error reporter. Without the last three, it keeps its state in a thread variable, does not instrument and warns on stderr.
+Outside of rails, you must set your application stash manually, from the options the railtie would otherwise
+read from `config.query_stash`:
+
+```ruby
+QueryStash::ActiveRecord.set(
+  app,
+  QueryStash::ActiveRecord.new(
+    cache_store: MyCache.new,  # required: any object with `read`, `write(key, value, expires_in:)` and `clear`
+    enabled: true,
+    isolated_state: MyApp::CurrentContext,  # `[]`, `[]=`, `key?` and `delete`; by default, a thread variable
+    instrumenter: MyApp::Instrumenter,      # `instrument(name, payload) { ... }`; by default, no one
+    error_reporter: MyApp::Errors,          # `report(error, handled: true)`; by default, a warning on stderr
+    raise_on_cache_error: false
+  )
+)
+```
 
 ## Why this repo has history from before it existed
 

@@ -10,18 +10,118 @@ RSpec.describe QueryStash::Railtie do
     end
   end
 
-  describe ".build_cache_store" do
-    it "resolves a store name and its options like Rails does" do
-      store = described_class.build_cache_store(QueryStash::ActiveRecord, :memory_store, { size: 1.megabyte })
+  describe "the options of each adapter" do
+    let(:config_options) { Rails.application.config.query_stash }
 
-      expect(store).to be_a(ActiveSupport::Cache::MemoryStore)
-      expect(store.instance_variable_get(:@max_size)).to eq(1.megabyte)
+    it "have a section under config.query_stash for each adapter that is loaded, empty until set" do
+      expect(config_options.active_record).to be_empty
+      expect(config_options.mongo).to be_empty
     end
 
-    it "hands back a store instance as it is" do
-      store = ActiveSupport::Cache::MemoryStore.new
+    describe ".build" do
+      # A config like the app's, with `root` set on config.query_stash and `sections` on the adapters' own.
+      def config_with(root = {}, **sections)
+        options = ActiveSupport::OrderedOptions.new
+                                               .update(config_options.except(:active_record, :mongo))
+                                               .update(root)
+        sections.each { |name, own| options[name] = ActiveSupport::OrderedOptions.new.update(own) }
 
-      expect(described_class.build_cache_store(QueryStash::Mongo, store)).to be(store)
+        ActiveSupport::OrderedOptions.new.update(query_stash: options)
+      end
+
+      def build(adapter, config)
+        described_class.build(adapter, config)
+      end
+
+      it "inherits what config.query_stash sets, when its section sets nothing" do
+        config = config_with({ enabled: false }, active_record: {}, mongo: {})
+
+        expect(build(QueryStash::ActiveRecord, config).enabled).to be(false)
+        expect(build(QueryStash::Mongo, config).enabled).to be(false)
+      end
+
+      it "takes what its own section sets, over config.query_stash" do
+        config = config_with({ enabled: true }, active_record: { enabled: false })
+
+        expect(build(QueryStash::ActiveRecord, config).enabled).to be(false)
+      end
+
+      it "leaves the other adapters with config.query_stash" do
+        config = config_with({ enabled: true }, active_record: { enabled: false })
+
+        expect(build(QueryStash::Mongo, config).enabled).to be(true)
+      end
+
+      it "counts what the section sets to true over a false in config.query_stash" do
+        config = config_with({ enabled: false }, mongo: { enabled: true })
+
+        expect(build(QueryStash::Mongo, config).enabled).to be(true)
+        expect(build(QueryStash::ActiveRecord, config).enabled).to be(false)
+      end
+
+      it "counts a nil in the section as set" do
+        config = config_with({ isolated_state: ActiveSupport::IsolatedExecutionState }, mongo: { isolated_state: nil })
+        stash = build(QueryStash::Mongo, config)
+
+        # nil is the "none given" of the stash, which keeps its state in a thread variable
+        expect(stash.instance_variable_get(:@isolated_state)).to be_a(QueryStash::Base::ThreadVariableState)
+      end
+
+      it "takes isolated_state, instrumenter and error_reporter from its section" do
+        isolated_state = QueryStash::Base::ThreadVariableState.new
+        instrumenter = QueryStash::Base::NullInstrumenter.new
+        error_reporter = QueryStash::Base::WarnErrorReporter.new
+        config = config_with(
+          {},
+          active_record: { isolated_state: isolated_state, instrumenter: instrumenter, error_reporter: error_reporter }
+        )
+
+        stash = build(QueryStash::ActiveRecord, config)
+
+        expect(stash.instance_variable_get(:@isolated_state)).to be(isolated_state)
+        expect(stash.instance_variable_get(:@instrumenter)).to be(instrumenter)
+        expect(stash.instance_variable_get(:@error_reporter)).to be(error_reporter)
+        other = build(QueryStash::Mongo, config)
+        expect(other.instance_variable_get(:@instrumenter)).to be(ActiveSupport::Notifications)
+      end
+
+      it "takes cache_store from its section, built like the root's" do
+        config = config_with({}, mongo: { cache_store: [:memory_store, { size: 1.megabyte }] })
+
+        mongo = build(QueryStash::Mongo, config)
+        expect(mongo.cache.instance_variable_get(:@max_size)).to eq(1.megabyte)
+        expect(build(QueryStash::ActiveRecord, config).cache.instance_variable_get(:@max_size)).not_to eq(1.megabyte)
+      end
+
+      it "builds the store of cache_store like Rails does, with Rails' own file store for :file_store" do
+        Dir.mktmpdir do |dir|
+          config = config_with({ cache_store: [:file_store, File.join(dir, "stash")] },
+                               mongo: { cache_store: [:file_store, File.join(dir, "other")] })
+
+          expect(build(QueryStash::ActiveRecord, config).cache).to have_attributes(
+            class: ActiveSupport::Cache::FileStore, cache_path: File.join(dir, "stash")
+          )
+          expect(build(QueryStash::Mongo, config).cache.cache_path).to eq(File.join(dir, "other"))
+        end
+      end
+
+      it "hands back a store instance as it is" do
+        store = ActiveSupport::Cache::MemoryStore.new
+
+        expect(build(QueryStash::Mongo, config_with({ cache_store: store })).cache).to be(store)
+      end
+
+      it "ignores what a section sets that is not an adapter option" do
+        config = config_with({ raise_on_cache_error: true }, active_record: { raise_on_cache_error: false })
+
+        expect(build(QueryStash::ActiveRecord, config).instance_variable_get(:@raise_on_cache_error)).to be(true)
+      end
+
+      it "leaves config.query_stash as it was" do
+        config = config_with({ enabled: true }, active_record: { enabled: false })
+
+        expect { build(QueryStash::ActiveRecord, config) }.not_to(change { config.query_stash.to_h })
+      end
     end
   end
 

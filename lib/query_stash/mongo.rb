@@ -98,6 +98,7 @@ module QueryStash
         end
         # Results are always Arrays (never nil), so nil unambiguously means a miss.
         unless cached_result.nil?
+          @instrumenter.instrument("cache_hit.query_stash", adapter: :mongo, rule: rule.name)
           rule.on_cache_hit&.call(rule, cached_result)
           return cached_result
         end
@@ -109,9 +110,11 @@ module QueryStash
 
         rescue_cache_error do
           if ttl_seconds.positive?
+            @instrumenter.instrument("cache_miss.query_stash", adapter: :mongo, rule: rule.name)
             rule.on_cache_miss&.call(rule, result)
             cache_store.write(cache_key, result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
           else
+            @instrumenter.instrument("cache_skip.query_stash", adapter: :mongo, rule: rule.name)
             rule.on_cache_skip&.call(rule, result)
           end
         end

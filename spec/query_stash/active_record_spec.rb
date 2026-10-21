@@ -291,46 +291,6 @@ RSpec.describe QueryStash::ActiveRecord do
 
       expect(build_stash(described_class, cache_store: :null_store).cache).to be_a(ActiveSupport::Cache::NullStore)
     end
-
-    it "builds a QueryStash::FileStore under an active-record- prefixed path for :file_store" do
-      Dir.mktmpdir do |dir|
-        store = build_stash(described_class,
-                            cache_store: [:file_store, File.join(dir, "stash"), { expires_in: 60 }]).cache
-
-        expect(store).to be_a(QueryStash::FileStore)
-        expect(store.cache_path).to eq(File.join(dir, "active-record-stash"))
-        expect(store.options[:expires_in]).to eq(60)
-      end
-    end
-  end
-
-  describe "#cache_usage_bytes" do
-    it "reports the MemoryStore size" do
-      stash = build_stash(described_class)
-      stash.cache.write("key", "value")
-
-      expect(stash.cache_usage_bytes).to be_positive
-    end
-
-    it "reports used_memory for Redis-backed stores, refreshed at most once a minute" do
-      store = ActiveSupport::Cache::MemoryStore.new
-      stats = { "used_memory" => 1024 }
-      store.define_singleton_method(:redis) { :redis }
-      store.define_singleton_method(:stats) { stats.dup }
-      stash = build_stash(described_class, cache_store: store)
-
-      expect(stash.cache_usage_bytes).to eq(1024)
-      stats["used_memory"] = 2048
-      expect(stash.cache_usage_bytes).to eq(1024)
-    end
-
-    it "reports the size of a file store" do
-      Dir.mktmpdir do |dir|
-        stash = build_stash(described_class, cache_store: [:file_store, File.join(dir, "cache")])
-
-        expect(stash.cache_usage_bytes).to be_a(Integer)
-      end
-    end
   end
 
   describe "cache errors" do
@@ -450,6 +410,58 @@ RSpec.describe QueryStash::ActiveRecord do
 
           # Verify cached: second call returns the same result without yielding
           expect(stash.wrap(sql, []) { "different" }).to eq("yielded_result")
+        end
+      end
+
+      context "when a result is to be stored" do
+        it "emits cache_miss.query_stash right before on_cache_miss" do
+          order = []
+          registry.add_rule(/SELECT.*users/, name: "user_queries", on_cache_miss: proc { order << :callback },
+                                             ttl_seconds: 60, ttl_jitter_seconds: 0)
+          ActiveSupport::Notifications.subscribed(->(*, payload) { order << payload }, "cache_miss.query_stash") do
+            stash.wrap(sql, []) { "yielded_result" }
+          end
+
+          expect(order).to eq([{ adapter: :active_record, rule: "user_queries" }, :callback])
+        end
+
+        it "does not emit it for a result that is skipped" do
+          registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 0, ttl_jitter_seconds: 0)
+
+          expect(events_of("cache_miss.query_stash") { stash.wrap(sql, []) { "yielded_result" } }).to be_empty
+        end
+
+        it "does not emit it for a hit" do
+          registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 60, ttl_jitter_seconds: 0)
+          cache.write(cache_key_for(sql), "cached_result")
+
+          expect(events_of("cache_miss.query_stash") { stash.wrap(sql, []) { "yielded_result" } }).to be_empty
+        end
+      end
+
+      context "when a result is skipped" do
+        it "emits cache_skip.query_stash right before on_cache_skip" do
+          order = []
+          registry.add_rule(/SELECT.*users/, name: "user_queries", on_cache_skip: proc { order << :callback },
+                                             ttl_seconds: 0, ttl_jitter_seconds: 0)
+          ActiveSupport::Notifications.subscribed(->(*, payload) { order << payload }, "cache_skip.query_stash") do
+            stash.wrap(sql, []) { "yielded_result" }
+          end
+
+          expect(order).to eq([{ adapter: :active_record, rule: "user_queries" }, :callback])
+        end
+
+        it "does not emit it for a result that is stored" do
+          registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 60, ttl_jitter_seconds: 0)
+
+          expect(events_of("cache_skip.query_stash") { stash.wrap(sql, []) { "yielded_result" } }).to be_empty
+        end
+
+        it "does not emit it for a hit" do
+          registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 0, ttl_jitter_seconds: 0)
+          cache.write(cache_key_for(sql), "cached_result")
+
+          expect(events_of("cache_skip.query_stash") { stash.wrap(sql, []) { "yielded_result" } }).to be_empty
         end
       end
 

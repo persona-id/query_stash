@@ -266,55 +266,11 @@ RSpec.describe QueryStash::Mongo do
     it "is a MemoryStore by default" do
       expect(build_stash(described_class).cache).to be_a(ActiveSupport::Cache::MemoryStore)
     end
-
-    it "builds a QueryStash::FileStore under a mongo- prefixed path for :file_store" do
-      Dir.mktmpdir do |dir|
-        store = build_stash(described_class, cache_store: [:file_store, File.join(dir, "stash")]).cache
-
-        expect(store).to be_a(QueryStash::FileStore)
-        expect(store.cache_path).to eq(File.join(dir, "mongo-stash"))
-      end
-    end
   end
 
   describe "#initialize" do
     it "builds a MongoFilterRegistry" do
       expect(build_stash(described_class).registry).to be_a(described_class::MongoFilterRegistry)
-    end
-  end
-
-  describe "#cache_usage_bytes" do
-    def redis_like_store(used)
-      ActiveSupport::Cache::MemoryStore.new.tap do |store|
-        store.define_singleton_method(:redis) { :redis }
-        store.define_singleton_method(:stats) { { "used_memory" => used } }
-      end
-    end
-
-    it "reports the MemoryStore size" do
-      stash = build_stash(described_class)
-      stash.cache.write("key", "value")
-
-      expect(stash.cache_usage_bytes).to be_positive
-    end
-
-    it "tracks the once-a-minute Redis stats per store" do
-      stash = build_stash(described_class, cache_store: redis_like_store(1024))
-      routed = described_class::Registry::Rule.new(
-        selector: {}, name: "routed", ttl_seconds: 60, ttl_jitter_seconds: 0,
-        on_cache_hit: nil, on_cache_miss: nil, on_cache_skip: nil, enabled: nil, store: redis_like_store(4096)
-      )
-
-      expect(stash.cache_usage_bytes).to eq(1024)
-      expect(stash.cache_usage_bytes(routed)).to eq(4096)
-    end
-
-    it "reports the size of a file store" do
-      Dir.mktmpdir do |dir|
-        stash = build_stash(described_class, cache_store: [:file_store, File.join(dir, "cache")])
-
-        expect(stash.cache_usage_bytes).to be_a(Integer)
-      end
     end
   end
 
@@ -387,6 +343,12 @@ RSpec.describe QueryStash::Mongo do
           expect(cursor_runs.length).to eq(1)
         end
 
+        it "does not emit cache_hit.query_stash" do
+          registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 60, ttl_jitter_seconds: 0)
+
+          expect(events_of("cache_hit.query_stash") { documents }).to be_empty
+        end
+
         it "hands the documents to the consumer" do
           registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 60, ttl_jitter_seconds: 0)
           received = []
@@ -397,8 +359,71 @@ RSpec.describe QueryStash::Mongo do
         end
       end
 
+      context "when a result is to be stored" do
+        it "emits cache_miss.query_stash right before on_cache_miss" do
+          order = []
+          registry.add_rule(rule_selector, name: "accounts_by_token", on_cache_miss: proc { order << :callback },
+                                           ttl_seconds: 60, ttl_jitter_seconds: 0)
+          ActiveSupport::Notifications.subscribed(->(*, payload) { order << payload }, "cache_miss.query_stash") do
+            documents
+          end
+
+          expect(order).to eq([{ adapter: :mongo, rule: "accounts_by_token" }, :callback])
+        end
+
+        it "does not emit it for a result that is skipped" do
+          registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 0, ttl_jitter_seconds: 0)
+
+          expect(events_of("cache_miss.query_stash") { documents }).to be_empty
+        end
+
+        it "does not emit it for a hit" do
+          registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 60, ttl_jitter_seconds: 0)
+          cache.write(cache_key_for(view), ["cached_doc"])
+
+          expect(events_of("cache_miss.query_stash") { documents }).to be_empty
+        end
+      end
+
+      context "when a result is skipped" do
+        it "emits cache_skip.query_stash right before on_cache_skip" do
+          order = []
+          registry.add_rule(rule_selector, name: "accounts_by_token", on_cache_skip: proc { order << :callback },
+                                           ttl_seconds: 0, ttl_jitter_seconds: 0)
+          ActiveSupport::Notifications.subscribed(->(*, payload) { order << payload }, "cache_skip.query_stash") do
+            documents
+          end
+
+          expect(order).to eq([{ adapter: :mongo, rule: "accounts_by_token" }, :callback])
+        end
+
+        it "does not emit it for a result that is stored" do
+          registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 60, ttl_jitter_seconds: 0)
+
+          expect(events_of("cache_skip.query_stash") { documents }).to be_empty
+        end
+
+        it "does not emit it for a hit" do
+          registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 0, ttl_jitter_seconds: 0)
+          cache.write(cache_key_for(view), ["cached_doc"])
+
+          expect(events_of("cache_skip.query_stash") { documents }).to be_empty
+        end
+      end
+
       context "when cache has the result" do
         before { cache.write(cache_key_for(view), ["cached_doc"]) }
+
+        it "emits cache_hit.query_stash right before on_cache_hit" do
+          order = []
+          registry.add_rule(rule_selector, name: "accounts_by_token", on_cache_hit: proc { order << :callback },
+                                           ttl_seconds: 60, ttl_jitter_seconds: 0)
+          ActiveSupport::Notifications.subscribed(->(*, payload) { order << payload }, "cache_hit.query_stash") do
+            documents
+          end
+
+          expect(order).to eq([{ adapter: :mongo, rule: "accounts_by_token" }, :callback])
+        end
 
         it "returns the cached documents without running the cursor and calls on_cache_hit" do
           called_with_result = nil
@@ -455,14 +480,6 @@ RSpec.describe QueryStash::Mongo do
           expect(routed_store.read(cache_key_for(view))).to eq(["db_doc"])
           expect(cache.instance_variable_get(:@data)).to be_empty
           expect(documents(["different"])).to eq(["db_doc"])
-        end
-
-        it "measures the rule's store in cache_usage_bytes" do
-          documents
-          rule = registry.match_rule(selector("accounts", { "token" => "acct_abc123" }))
-
-          expect(stash.cache_usage_bytes(rule)).to be_positive
-          expect(stash.cache_usage_bytes).to eq(0)
         end
       end
 

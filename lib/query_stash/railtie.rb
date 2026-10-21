@@ -10,27 +10,33 @@ require "active_support/notifications"
 # needs from it, as options of `config.query_stash`.
 module QueryStash
   class Railtie < Rails::Railtie
+    # The options an adapter can set for itself, in `config.query_stash.active_record` and
+    # `config.query_stash.mongo`. What it does not set, it takes from `config.query_stash`.
+    ADAPTER_OPTIONS = %i[enabled isolated_state instrumenter error_reporter cache_store].freeze
+
+    # The adapters' sections of `config.query_stash`, which are not options of their own.
+    ADAPTER_SECTIONS = %i[active_record mongo].freeze
+
     class << self
       # The `adapter` (QueryStash::ActiveRecord or QueryStash::Mongo) for the app's `config`, with
-      # the cache store `config.query_stash.cache_store` names.
+      # its own options over the ones of `config.query_stash`, and the cache store they name.
       def build(adapter, config)
-        adapter.new(config, cache_store: build_cache_store(adapter, *Array(config.query_stash.cache_store)))
+        options = options_for(adapter, config)
+
+        # `cache_store` takes the same values as Rails' `config.cache_store`.
+        adapter.new(
+          **options.slice(:enabled, :isolated_state, :instrumenter, :error_reporter, :raise_on_cache_error),
+          cache_store: ActiveSupport::Cache.lookup_store(*Array(options.cache_store))
+        )
       end
 
-      # Takes the same values as Rails' `config.cache_store`. `:file_store` gets a QueryStash::FileStore,
-      # with the adapter's prefix on the directory's basename so each adapter keeps its own directory:
-      # "tmp/stash" becomes "tmp/active-record-stash".
-      def build_cache_store(adapter, store, *parameters)
-        return ActiveSupport::Cache.lookup_store(store, *parameters) unless store == :file_store
+      # `config.query_stash`, with what the adapter's own section sets on top of it. A section only
+      # holds what the user set, so an option it has, even a `false` or a `nil`, is the user's choice.
+      def options_for(adapter, config)
+        root = config.query_stash
+        own = root[adapter.name.to_s.demodulize.underscore.to_sym] || {}
 
-        require_relative "file_store"
-
-        cache_path, options = parameters
-
-        QueryStash::FileStore.new(
-          File.join(File.dirname(cache_path), "#{adapter.prefix}-#{File.basename(cache_path)}"),
-          **options.to_h
-        )
+        ActiveSupport::OrderedOptions.new.update(root.except(*ADAPTER_SECTIONS)).update(own.slice(*ADAPTER_OPTIONS))
       end
     end
 
@@ -43,6 +49,10 @@ module QueryStash
         cache_store: [:memory_store, { size: 128.megabytes, compress: true }],
         raise_on_cache_error: Rails.env.development? || Rails.env.test?
       )
+
+      # Only for the adapters that are loaded.
+      config.query_stash.active_record = ActiveSupport::OrderedOptions.new if defined?(::ActiveRecord::Railtie)
+      config.query_stash.mongo = ActiveSupport::OrderedOptions.new if defined?(::Rails::Mongoid::Railtie)
     end
 
     # Builds each adapter's instance from the app's config, which the environment files have already
