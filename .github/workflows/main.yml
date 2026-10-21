@@ -36,7 +36,7 @@ jobs:
         image: mongo:8.0
         ports:
           - 27017:27017
-        options: --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 })'" --health-interval 10s --health-timeout 5s --health-retries 5
+        options: '--health-cmd "mongosh --quiet --eval ''db.runCommand({ ping: 1 })''" --health-interval 10s --health-timeout 5s --health-retries 5'
     strategy:
       fail-fast: false
       matrix:
@@ -56,7 +56,7 @@ jobs:
           - mongo
         include:
           - db: sqlite3
-            database_url: sqlite3::memory:
+            database_url: "sqlite3::memory:"
           - db: postgresql
             database_url: postgres://postgres:postgres@127.0.0.1:5432/query_stash_test
           - db: mysql
