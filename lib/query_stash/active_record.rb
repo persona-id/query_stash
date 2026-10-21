@@ -10,7 +10,7 @@ module QueryStash
 
     class SqlRegistry < Registry
       def add_rule(regex, ...)
-        raise "Regex must be a Regexp, got #{regex.class}" if regex.class != Regexp
+        raise Error, "Regex must be a Regexp, got #{regex.class}" if regex.class != Regexp
 
         super
       end

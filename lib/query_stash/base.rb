@@ -50,9 +50,9 @@ module QueryStash
         enabled: nil,
         store: nil
       )
-        raise "Rule name is required" if name.nil? || name.empty?
+        raise Error, "Rule name is required" if name.nil? || name.empty?
 
-        raise "Rule name #{name.inspect} is already taken" if @rules.any? { |r| r.name == name }
+        raise Error, "Rule name #{name.inspect} is already taken" if @rules.any? { |r| r.name == name }
 
         @rules << Rule.new(
           selector: selector,
