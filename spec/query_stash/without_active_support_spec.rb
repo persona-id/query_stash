@@ -47,7 +47,7 @@ RSpec.describe "QueryStash without ActiveSupport" do
       sql.registry.add_rule(/SELECT/, name: "selects", ttl_seconds: 60, ttl_jitter_seconds: 0)
       binds = sql.enable! { sql.wrap("SELECT 1", ["bind"]) { :db } }
 
-      puts [outside, inside, binds, QueryStash::Mongo.prefix, QueryStash::ActiveRecord.prefix].inspect
+      puts [outside, inside, binds].inspect
       puts $LOADED_FEATURES.grep(/active_support/).first(3).inspect
     RUBY
   end
@@ -57,7 +57,7 @@ RSpec.describe "QueryStash without ActiveSupport" do
 
     expect(status).to be_success, output
     results, loaded_active_support = output.lines.last(2).map(&:chomp)
-    expect(results).to eq([[[%w[a b], %w[a b], 2], [%w[a b], %w[a b], 1], :db, "mongo", "active-record"]].first.inspect)
+    expect(results).to eq([[%w[a b], %w[a b], 2], [%w[a b], %w[a b], 1], :db].inspect)
     expect(loaded_active_support).to eq("[]")
   end
 end

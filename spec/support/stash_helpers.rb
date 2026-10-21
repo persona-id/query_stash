@@ -8,11 +8,7 @@ module StashHelpers
                                                       .update(Rails.application.config.query_stash)
                                                       .update(overrides)
 
-    QueryStash::Railtie.build(adapter, config).tap { |stash| built_stashes << stash }
-  end
-
-  def built_stashes
-    @built_stashes ||= []
+    QueryStash::Railtie.build(adapter, config)
   end
 
   # The payloads of the `name` notifications the block emits.

@@ -154,6 +154,29 @@ config.query_stash.cache_store = :file_store, "tmp/query-stash"
 - **Redis/Valkey**: shared across processes and hosts. If several environments share one cluster, put the environment in the namespace. The cache key doesn't include it, and two environments with the same database name would otherwise read each other's entries.
 - **`file_store`**: shared by all processes on one machine. A background thread runs `cleanup` every 5 minutes, because FileStore has no LRU and no size cap. Size your rules so the directory can't fill the disk.
 
+### Options per adapter
+
+`config.query_stash.active_record` and `config.query_stash.mongo` (each one
+exists when that framework is loaded) can set `enabled`, `isolated_state`,
+`instrumenter`, `error_reporter` and `cache_store` for their adapter alone.
+Whatever one of them doesn't set, it takes from `config.query_stash`, even if
+that is set after it:
+
+```ruby
+# config/application.rb
+config.query_stash.cache_store = :redis_cache_store, { url: ENV["STASH_REDIS_URL"] }
+config.query_stash.mongo.cache_store = :memory_store, { size: 32.megabytes }
+config.query_stash.active_record.enabled = false
+```
+
+Here ActiveRecord is only stashed inside `enable!` blocks, in the Redis store,
+and Mongo is always stashed, in memory. An option that is set to `false` or
+`nil` in a section counts as set. `raise_on_cache_error` is the same for both,
+and read from `config.query_stash`.
+
+They are read once, before `config/initializers` run, like the rest of
+`config.query_stash`.
+
 ### Threads
 
 What `enable!` and `disable!` set lives in `config.query_stash.isolated_state`, which is `ActiveSupport::IsolatedExecutionState` by default for Ruby on Rails, so threads spawned inside those blocks don't inherit it; they follow `config.query_stash.enabled` instead. Call `enable!` or `disable!` inside the thread to choose:
