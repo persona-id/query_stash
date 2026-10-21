@@ -10,7 +10,7 @@ RSpec.describe QueryStash::FileStore do
   gnu_du = system("du", "-bs", __FILE__, out: File::NULL, err: File::NULL)
 
   let(:cache_path) { Dir.mktmpdir("query-stash-spec") }
-  let(:store) { described_class.new("dummy-label", cache_path, lock_path: File.join(cache_path, "lock")) }
+  let(:store) { described_class.new(cache_path) }
   let(:payload) { "some-value" * 1_000 }
 
   after do
@@ -19,6 +19,27 @@ RSpec.describe QueryStash::FileStore do
     store.instance_variable_get(:@metrics_thread)&.kill
     store.instance_variable_get(:@evictor_thread)&.kill
     FileUtils.remove_entry(cache_path, true)
+    FileUtils.rm_f("#{cache_path}.lock")
+  end
+
+  describe "#initialize" do
+    it "names its background threads after the cache directory" do
+      thread_names = %i[@evictor_thread @metrics_thread].map { |ivar| store.instance_variable_get(ivar).name }
+
+      basename = File.basename(cache_path)
+      expect(thread_names).to eq(["#{basename}-evictor", "#{basename}-metrics"])
+    end
+
+    it "locks a file next to the cache directory while it cleans up" do
+      stub_const("#{described_class}::EVICTOR_SLEEP_INTERVAL", 0)
+      allow(store).to receive(:sleep)
+      cleaned = Queue.new
+      allow(store).to receive(:cleanup) { cleaned << true }
+
+      Timeout.timeout(5) { cleaned.pop }
+
+      expect(File).to exist("#{cache_path}.lock")
+    end
   end
 
   describe "#write" do
@@ -55,10 +76,7 @@ RSpec.describe QueryStash::FileStore do
     end
 
     context "when the cache directory has not been created yet" do
-      let(:store) do
-        described_class.new("dummy-label", File.join(cache_path, "not-created-yet"),
-                            lock_path: File.join(cache_path, "lock"))
-      end
+      let(:store) { described_class.new(File.join(cache_path, "not-created-yet")) }
 
       before do
         allow(Open3).to receive(:capture3).and_call_original

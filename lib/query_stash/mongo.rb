@@ -1,14 +1,10 @@
 # frozen_string_literal: true
 
 require "digest"
-require "query_stash/base"
+require_relative "base"
 
 module QueryStash
-  module Mongo
-    include QueryStash::Base
-
-    extend self
-
+  class Mongo < Base
     # ---------------- Constants ----------------
     # Wildcard sentinel for selector patterns
     ANY = Object.new.freeze
@@ -28,62 +24,32 @@ module QueryStash
       end
     end
 
-    module ContextMethods
-      def with_query_stash(&block)
-        QueryStash::IsolatedState.wrap(query_stash_mongo_enabled: Rails.application.config.query_stash.enabled, &block)
-      end
-
-      def without_query_stash(&block)
-        QueryStash::IsolatedState.wrap(query_stash_mongo_enabled: false, &block)
-      end
-    end
-
-    # Enables the stash for the duration of each request.
+    # Enables the stash for the duration of each request. `application` is the Rails application the
+    # middleware stack belongs to; `app` is the next middleware.
     class Middleware
-      def initialize(app)
+      def initialize(app, application)
         @app = app
+        @application = application
       end
 
       def call(env)
-        ::Mongo.with_query_stash { @app.call(env) }
+        QueryStash::Mongo[@application].enable! { @app.call(env) }
       end
     end
 
     module AdapterPatch
-      def each
-        if QueryStash::IsolatedState[:query_stash_mongo_enabled]
-          result = QueryStash::Mongo.wrap(self) do |cacheable:|
-            # Avoid eager loading the entire result set unless this query actually
-            # matches a cache rule. This can cause very quick OOMs
-            # if it has to load a whole collection at once
-            return super unless cacheable
-
-            result = []
-            # Have to explicitly pass in a block because otherwise, this will yield
-            # and break processing immediately.
-            super { |doc| result << doc }
-            result
-          end
-
-          if block_given?
-            # Use yield here to match the pattern in Mongo::Collection::View::Iterable#each
-            result.each { |doc| yield doc } # rubocop:disable Style/ExplicitBlockArgument
-          else
-            result.to_enum
-          end
-        else
-          super
-        end
+      def each(&block)
+        QueryStash::Mongo[Rails.application].wrap(self, block) { |&iterate| super(&iterate) }
       end
     end
 
     def prefix = "mongo"
 
-    def registry
-      @_registry ||= MongoFilterRegistry.new
-    end
+    # Runs the view's cursor through the stash: `cursor` iterates the view's documents into the block
+    # it is given, and `consumer` is the block `each` was called with.
+    def wrap(view, consumer = nil, &cursor)
+      return cursor.call(&consumer) unless stashing?
 
-    def wrap(view)
       # Based off of #cache_options in Mongo::Collection::View::Iterable
       # https://github.com/mongodb/mongo-ruby-driver/blob/v2.19.3/lib/mongo/collection/view/iterable.rb
       selector = {
@@ -97,9 +63,24 @@ module QueryStash
       }
 
       rule = registry.match_rule(selector)
-      return yield(cacheable: false) unless rule
+      # Avoid eager loading the entire result set unless this query actually matches a cache rule.
+      # This can cause very quick OOMs if it has to load a whole collection at once.
+      return cursor.call(&consumer) unless rule
 
-      cache_key = cache_key_for(view.database.name, selector)
+      documents = fetch(cache_key_for(view.database.name, selector), rule) do
+        [].tap { |docs| cursor.call { |doc| docs << doc } }
+      end
+
+      consumer ? documents.each(&consumer) : documents.to_enum
+    end
+
+    private
+
+    def build_registry
+      MongoFilterRegistry.new
+    end
+
+    def fetch(cache_key, rule)
       cache_obj = cache_for(rule)
 
       rescue_cache_error do
@@ -119,7 +100,7 @@ module QueryStash
         end
       end
 
-      result = yield(cacheable: true)
+      result = yield
 
       rescue_cache_error do
         ttl_seconds =
@@ -146,8 +127,6 @@ module QueryStash
 
       result
     end
-
-    private
 
     # Based off of #cache_key from Mongo::QueryCache
     # https://github.com/mongodb/mongo-ruby-driver/blob/master/lib/mongo/query_cache.rb#L19

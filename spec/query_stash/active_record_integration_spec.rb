@@ -14,9 +14,7 @@ RSpec.describe "QueryStash::ActiveRecord against the dummy app's database", data
 
   before do
     Post.delete_all
-    QueryStash::ActiveRecord.cache.clear
-    QueryStash::ActiveRecord.registry.instance_variable_set(:@rules, [])
-    QueryStash::ActiveRecord.registry.add_rule(
+    reset_app_stash(QueryStash::ActiveRecord).registry.add_rule(
       /\A#{Regexp.escape(lookup_prefix)}\d+/,
       name: "post_by_id",
       ttl_seconds: ->(result) { result.to_a.all? { |row| row["status"] == "published" } ? 60 : 0 },
@@ -44,7 +42,7 @@ RSpec.describe "QueryStash::ActiveRecord against the dummy app's database", data
   it "serves repeated lookups of a published row from the stash" do
     post = Post.create!(status: "published", title: "Hello")
 
-    ActiveRecord::Base.with_query_stash do
+    QueryStash::ActiveRecord[Rails.application].enable! do
       expect(Post.find(post.id).title).to eq("Hello")
       expect(Post.find(post.id).title).to eq("Hello")
     end
@@ -56,7 +54,7 @@ RSpec.describe "QueryStash::ActiveRecord against the dummy app's database", data
   it "does not cache rows the TTL callable skips" do
     post = Post.create!(status: "draft", title: "WIP")
 
-    ActiveRecord::Base.with_query_stash do
+    QueryStash::ActiveRecord[Rails.application].enable! do
       2.times { Post.find(post.id) }
     end
 
@@ -66,20 +64,33 @@ RSpec.describe "QueryStash::ActiveRecord against the dummy app's database", data
   it "keeps serving the cached row after a write until the TTL expires" do
     post = Post.create!(status: "published", title: "Before")
 
-    ActiveRecord::Base.with_query_stash do
+    QueryStash::ActiveRecord[Rails.application].enable! do
       Post.find(post.id)
       Post.where(id: post.id).update_all(title: "After")
 
       expect(Post.find(post.id).title).to eq("Before")
     end
 
-    expect(Post.find(post.id).title).to eq("After")
+    QueryStash::ActiveRecord[Rails.application].disable! do
+      expect(Post.find(post.id).title).to eq("After")
+    end
   end
 
-  it "leaves queries alone outside a with_query_stash block" do
+  it "follows config.query_stash.enabled outside enable! and disable!" do
     post = Post.create!(status: "published", title: "Hello")
 
     2.times { Post.find(post.id) }
+    expect(lookups(post.id)).to eq(1)
+
+    allow(QueryStash::ActiveRecord[Rails.application]).to receive(:enabled).and_return(false)
+    2.times { Post.find(post.id) }
+    expect(lookups(post.id)).to eq(3)
+  end
+
+  it "leaves queries alone inside disable!" do
+    post = Post.create!(status: "published", title: "Hello")
+
+    QueryStash::ActiveRecord[Rails.application].disable! { 2.times { Post.find(post.id) } }
 
     expect(lookups(post.id)).to eq(2)
     expect(hits).to be_empty

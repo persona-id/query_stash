@@ -11,6 +11,14 @@ module QueryStash
   module IsolatedState
     extend self
 
+    def fetch(key, &block)
+      if ActiveSupport::IsolatedExecutionState.key?(key)
+        self[key]
+      else
+        block.call
+      end
+    end
+
     def [](key)
       ActiveSupport::IsolatedExecutionState[key]
     end
@@ -20,7 +28,13 @@ module QueryStash
       values.each { |key, value| ActiveSupport::IsolatedExecutionState[key] = value }
       yield
     ensure
-      previous&.each { |key, value| ActiveSupport::IsolatedExecutionState[key] = value }
+      previous&.each do |key, value|
+        if value.nil?
+          ActiveSupport::IsolatedExecutionState.delete(key)
+        else
+          ActiveSupport::IsolatedExecutionState[key] = value
+        end
+      end
     end
   end
 end

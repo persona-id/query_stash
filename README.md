@@ -10,7 +10,7 @@ the database adapter (and the Mongo driver), so call sites don't change:
 `Organization.find(id)` is served from the stash when a rule matches it.
 
 ```ruby
-QueryStash::ActiveRecord.configure do |rules|
+QueryStash::ActiveRecord[Rails.application].configure do |rules|
   rules.add_rule(
     /\ASELECT "plans"\.\* FROM "plans" WHERE "plans"\."id" = /,
     name: "plan_by_id",
@@ -34,7 +34,7 @@ Know what it does not do:
 - **No invalidation.** Entries leave on TTL (plus jitter) or eviction. A
   write does not clear the stash, so a read after a write can return the
   old row until the TTL runs out. Wrap read-after-write code in
-  `without_query_stash`, or don't stash those queries.
+  `disable!`, or don't stash those queries.
 - **Inlined SQL only.** Queries with bind parameters are passed through
   untouched. Use an adapter or configuration that inlines values (Trilogy
   and mysql2 do by default; set `prepared_statements: false` for SQLite or
@@ -62,23 +62,35 @@ adapter targets the 2.19 driver.
 
 ## Usage
 
-### Turn it on per request and per job
+### Turning it on and off
 
-Nothing is stashed outside an enabled block. For requests, the railtie adds
-`QueryStash::ActiveRecord::Middleware` and `QueryStash::Mongo::Middleware`
-to the app's middleware stack, one for each framework your app uses.
+`config.query_stash.enabled` (true by default) decides whether queries are
+stashed. With the default, every query that matches a rule is stashed,
+including in the console, rake tasks and migrations.
 
-For ActiveJob, the railtie wraps every job's `perform` in `with_query_stash`
-the same way. Wrap jobs from other job systems however they allow:
+`enable!` and `disable!` override it for the duration of a block. The
+railtie wraps every request in `enable!` (through
+`QueryStash::ActiveRecord::Middleware` and `QueryStash::Mongo::Middleware`,
+one for each framework your app uses) and every ActiveJob `perform`. So
+with `enabled = false`, only requests and jobs are stashed:
 
 ```ruby
-ActiveRecord::Base.with_query_stash { Mongo.with_query_stash { run_job } }
+# config/application.rb
+config.query_stash.enabled = false
+```
+
+Wrap jobs from other job systems however they allow:
+
+```ruby
+QueryStash::ActiveRecord[Rails.application].enable! do
+  QueryStash::Mongo[Rails.application].enable! { run_job }
+end
 ```
 
 Opt out where reads must see their own writes:
 
 ```ruby
-ActiveRecord::Base.without_query_stash do
+QueryStash::ActiveRecord[Rails.application].disable! do
   record.update!(status: "active")
   Record.find(record.id) # straight from the database
 end
@@ -86,10 +98,14 @@ end
 
 ### ActiveRecord rules
 
+The railtie builds a `QueryStash::ActiveRecord` and a `QueryStash::Mongo`
+for the app from `config.query_stash`, before `config/initializers` run.
+Configure their rules from an initializer.
+
 Rules match the SQL with a `Regexp`, first match wins:
 
 ```ruby
-QueryStash::ActiveRecord.configure do |rules|
+QueryStash::ActiveRecord[Rails.application].configure do |rules|
   rules.add_rule(
     /\ASELECT "templates"\.\* FROM "templates" WHERE "templates"\."id" = /,
     name: "published_template_by_id",
@@ -118,7 +134,7 @@ Mongo rules match a selector built from the view: `collection_name`,
 `filter`, `limit`, `skip`, `sort`, `projection` and `pipeline`.
 
 ```ruby
-QueryStash::Mongo.configure do |rules|
+QueryStash::Mongo[Rails.application].configure do |rules|
   rules.add_rule(
     {
       collection_name: "accounts",
@@ -155,17 +171,29 @@ A Mongo rule can be routed to its own store with `store:`.
 
 ### Stores
 
-The default store is a per-process
-`ActiveSupport::Cache::MemoryStore.new(size: 128.megabytes, compress: true)`.
-Assign any ActiveSupport cache store instead:
+Set the store with `config.query_stash.cache_store`. It takes the same
+values as Rails' `config.cache_store`: a store name followed by its
+arguments, or a store instance. The default is
+`[:memory_store, { size: 128.megabytes, compress: true }]`, one store per
+process. ActiveRecord and Mongo each build their own store from it, except
+from a store instance, which they share:
 
 ```ruby
-QueryStash::ActiveRecord.cache = ActiveSupport::Cache::RedisCacheStore.new(
+# config/application.rb
+config.query_stash.cache_store = :redis_cache_store, {
   url: ENV["STASH_REDIS_URL"],
   namespace: "query-stash:#{Rails.env}"
-)
-QueryStash::Mongo.cache = QueryStash::Mongo.file_store("tmp/query-stash-mongo", lock_path: "tmp/query-stash-mongo.lock")
+}
+
+# or, shared by the processes on one machine:
+config.query_stash.cache_store = :file_store, "tmp/query-stash"
 ```
+
+`:file_store` builds a `QueryStash::FileStore`, with the adapter's prefix on
+the directory's basename: the example above stores ActiveRecord results in
+`tmp/active-record-query-stash` and Mongo results in `tmp/mongo-query-stash`.
+Each one locks a file next to its directory (`tmp/active-record-query-stash.lock`)
+while it cleans up.
 
 - **MemoryStore**: one copy per process, no network hop. Keep
   `compress: true`; see the history for why.
@@ -177,19 +205,21 @@ QueryStash::Mongo.cache = QueryStash::Mongo.file_store("tmp/query-stash-mongo", 
   thread runs `cleanup` every 5 minutes, because FileStore has no LRU and no
   size cap. Size your rules so the directory can't fill the disk.
 
-`cache_usage_bytes` reports the size of the store (Redis `used_memory`,
-refreshed at most once a minute; the file store's own measurement; or the
-MemoryStore's size).
+`QueryStash::ActiveRecord[Rails.application].cache_usage_bytes` (and the
+same on `QueryStash::Mongo`) reports the size of the store (Redis
+`used_memory`, refreshed at most once a minute; the file store's own
+measurement; or the MemoryStore's size).
 
 ### Threads
 
-The enabled flags live in `ActiveSupport::IsolatedExecutionState`, so
-threads spawned inside an enabled block do not inherit them, and queries in
-those threads bypass the stash. Enable it inside the thread instead:
+What `enable!` and `disable!` set lives in
+`ActiveSupport::IsolatedExecutionState`, so threads spawned inside those
+blocks don't inherit it; they follow `config.query_stash.enabled` instead.
+Call `enable!` or `disable!` inside the thread to choose:
 
 ```ruby
 Thread.new do
-  ActiveRecord::Base.with_query_stash { Organization.find(id) }
+  QueryStash::ActiveRecord[Rails.application].enable! { Organization.find(id) }
 end
 ```
 
@@ -203,17 +233,6 @@ end
 A stash hit never reaches the adapter, so it fires no `sql.active_record`
 event. Subscribe to `cache_hit.query_stash` if you count queries per
 request.
-
-### Turning it off
-
-`config.query_stash.enabled` (true by default) is the value
-`with_query_stash`, and so the middlewares, turn the stash on with. Set it to
-false to keep the stash off everywhere without removing any call sites:
-
-```ruby
-# config/environments/development.rb
-config.query_stash.enabled = false
-```
 
 ### Errors
 

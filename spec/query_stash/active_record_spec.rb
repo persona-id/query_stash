@@ -73,70 +73,115 @@ RSpec.describe QueryStash::ActiveRecord do
       end.prepend(described_class).new
     end
 
-    before do
-      QueryStash::ActiveRecord.registry.instance_variable_set(:@rules, [])
-      QueryStash::ActiveRecord.cache.clear
-      QueryStash::ActiveRecord.registry.add_rule(/SELECT/, name: "test", ttl_seconds: 60, ttl_jitter_seconds: 0)
+    let!(:stash) { reset_app_stash(QueryStash::ActiveRecord) }
+
+    before { stash.registry.add_rule(/SELECT/, name: "test", ttl_seconds: 60, ttl_jitter_seconds: 0) }
+
+    def cached_entries
+      stash.cache.instance_variable_get(:@data).length
     end
 
-    context "when the stash is not enabled" do
-      it "calls super without using the cache" do
-        expect(adapter.internal_exec_query("SELECT * FROM users")).to eq("original_result")
+    context "when neither enable! nor disable! is active" do
+      it "runs the query through the app's stash while the app's stash is enabled" do
         adapter.internal_exec_query("SELECT * FROM users")
 
-        expect(QueryStash::ActiveRecord.cache.instance_variable_get(:@data)).to be_empty
+        expect(cached_entries).to eq(1)
+      end
+
+      it "calls super without using the cache while the app's stash is not enabled" do
+        allow(stash).to receive(:enabled).and_return(false)
+
+        expect(adapter.internal_exec_query("SELECT * FROM users")).to eq("original_result")
+        expect(cached_entries).to eq(0)
+      end
+    end
+
+    context "when the stash is disabled" do
+      it "calls super without using the cache" do
+        stash.disable! { adapter.internal_exec_query("SELECT * FROM users") }
+
+        expect(cached_entries).to eq(0)
       end
     end
 
     context "when the stash is enabled" do
-      it "uses the cache for matching queries" do
-        ActiveRecord::Base.with_query_stash do
-          adapter.internal_exec_query("SELECT * FROM users")
+      it "runs the query through the app's stash, even while the app's stash is not enabled" do
+        allow(stash).to receive(:enabled).and_return(false)
 
-          expect(QueryStash::ActiveRecord.cache.instance_variable_get(:@data).length).to eq(1)
-        end
+        stash.enable! { adapter.internal_exec_query("SELECT * FROM users") }
+
+        expect(cached_entries).to eq(1)
       end
     end
   end
 
-  describe QueryStash::ActiveRecord::ContextMethods do
-    describe "#with_query_stash" do
-      it "enables the stash" do
-        expect(QueryStash::IsolatedState[:query_stash_active_record_enabled]).to be_nil
+  describe ".[] and .set" do
+    let(:application) { Object.new }
 
-        ActiveRecord::Base.with_query_stash do
-          expect(QueryStash::IsolatedState[:query_stash_active_record_enabled]).to be(true)
+    after { described_class.send(:instances).delete(application) }
+
+    it "returns the instance the railtie set for the app" do
+      expect(described_class[Rails.application]).to be_a(described_class)
+    end
+
+    it "returns the instance set for an application" do
+      stash = build_stash(described_class)
+      described_class.set(application, stash)
+
+      expect(described_class[application]).to be(stash)
+    end
+
+    it "raises for an application nothing was set for" do
+      expect { described_class[application] }.to raise_error(KeyError)
+    end
+
+    it "keeps its instances apart from Mongo's" do
+      described_class.set(application, build_stash(described_class))
+
+      expect { QueryStash::Mongo[application] }.to raise_error(KeyError)
+    end
+
+    it "does not expose the instances" do
+      expect(described_class).not_to respond_to(:instances)
+    end
+  end
+
+  describe "toggling the stash" do
+    describe "#enable!" do
+      it "enables the stash" do
+        expect(QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]).to be_nil
+
+        QueryStash::ActiveRecord[Rails.application].enable! do
+          expect(QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]).to be(true)
         end
 
-        expect(QueryStash::IsolatedState[:query_stash_active_record_enabled]).to be_nil
+        expect(QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]).to be_nil
       end
 
-      it "leaves the stash off while config.query_stash.enabled is false" do
-        Rails.application.config.query_stash.enabled = false
+      it "turns the stash on even while the app's stash is not enabled" do
+        allow(QueryStash::ActiveRecord[Rails.application]).to receive(:enabled).and_return(false)
 
-        ActiveRecord::Base.with_query_stash do
-          expect(QueryStash::IsolatedState[:query_stash_active_record_enabled]).to be(false)
+        QueryStash::ActiveRecord[Rails.application].enable! do
+          expect(QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]).to be(true)
         end
-      ensure
-        Rails.application.config.query_stash.enabled = true
       end
     end
 
-    describe "#without_query_stash" do
+    describe "#disable!" do
       around do |example|
-        ActiveRecord::Base.with_query_stash do
+        QueryStash::ActiveRecord[Rails.application].enable! do
           example.run
         end
       end
 
       it "disables the stash" do
-        expect(QueryStash::IsolatedState[:query_stash_active_record_enabled]).to be(true)
+        expect(QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]).to be(true)
 
-        ActiveRecord::Base.without_query_stash do
-          expect(QueryStash::IsolatedState[:query_stash_active_record_enabled]).to be(false)
+        QueryStash::ActiveRecord[Rails.application].disable! do
+          expect(QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]).to be(false)
         end
 
-        expect(QueryStash::IsolatedState[:query_stash_active_record_enabled]).to be(true)
+        expect(QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]).to be(true)
       end
     end
   end
@@ -145,13 +190,30 @@ RSpec.describe QueryStash::ActiveRecord do
     it "enables the stash during the request and restores it afterwards" do
       seen = nil
       app = lambda do |_env|
-        seen = QueryStash::IsolatedState[:query_stash_active_record_enabled]
+        seen = QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]
         [200, {}, ["ok"]]
       end
 
-      expect(described_class.new(app).call({})).to eq([200, {}, ["ok"]])
+      expect(described_class.new(app, Rails.application).call({})).to eq([200, {}, ["ok"]])
       expect(seen).to be(true)
-      expect(QueryStash::IsolatedState[:query_stash_active_record_enabled]).to be_nil
+      expect(QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]).to be_nil
+    end
+
+    it "uses the stash of the application it was given" do
+      other_application = Object.new
+      other_stash = build_stash(QueryStash::ActiveRecord)
+      QueryStash::ActiveRecord.set(other_application, other_stash)
+      seen = nil
+      app = lambda do |_env|
+        seen = [QueryStash::IsolatedState[other_stash], QueryStash::IsolatedState[QueryStash::ActiveRecord[Rails.application]]]
+        [200, {}, ["ok"]]
+      end
+
+      described_class.new(app, other_application).call({})
+
+      expect(seen).to eq([true, nil])
+    ensure
+      QueryStash::ActiveRecord.send(:instances).delete(other_application)
     end
   end
 
@@ -176,14 +238,13 @@ RSpec.describe QueryStash::ActiveRecord do
     let(:sql) { "SELECT * FROM organizations WHERE organizations.id = 1" }
 
     before do
-      described_class.cache.clear
-      described_class.registry.instance_variable_set(:@rules, [])
-      described_class.registry.add_rule(/SELECT.*organizations/, name: "test_org_rule", ttl_seconds: 60,
-                                                                 ttl_jitter_seconds: 0)
+      reset_app_stash(described_class).registry.add_rule(/SELECT.*organizations/, name: "test_org_rule",
+                                                                                  ttl_seconds: 60,
+                                                                                  ttl_jitter_seconds: 0)
     end
 
     def query_in_parent_then_spawned_thread(&thread_body)
-      ActiveRecord::Base.with_query_stash do
+      QueryStash::ActiveRecord[Rails.application].enable! do
         fake_adapter.internal_exec_query(sql)
         fake_adapter.internal_exec_query(sql)
         expect(fake_adapter.db_call_count).to eq(1)
@@ -192,47 +253,67 @@ RSpec.describe QueryStash::ActiveRecord do
       end
     end
 
-    it "does not carry the flag into spawned threads" do
+    it "does not carry enable! into spawned threads, which follow the app's enabled instead" do
+      allow(described_class[Rails.application]).to receive(:enabled).and_return(false)
+
       query_in_parent_then_spawned_thread { fake_adapter.internal_exec_query(sql) }
 
       expect(fake_adapter.db_call_count).to eq(2)
     end
 
     it "serves a spawned thread from the cache when it enables the stash itself" do
+      allow(described_class[Rails.application]).to receive(:enabled).and_return(false)
+
       query_in_parent_then_spawned_thread do
-        ActiveRecord::Base.with_query_stash { fake_adapter.internal_exec_query(sql) }
+        QueryStash::ActiveRecord[Rails.application].enable! { fake_adapter.internal_exec_query(sql) }
       end
 
       expect(fake_adapter.db_call_count).to eq(1)
     end
   end
 
-  describe ".cache" do
-    it "returns a memoized ActiveSupport::Cache::MemoryStore instance" do
-      expect(described_class.cache).to be_a(ActiveSupport::Cache::MemoryStore)
-      expect(described_class.cache).to be(described_class.cache)
+  describe "#initialize" do
+    it "reads enabled from config.query_stash" do
+      expect(build_stash(described_class).enabled).to be(true)
+      expect(build_stash(described_class, enabled: false).enabled).to be(false)
+    end
+
+    it "builds a SqlRegistry" do
+      expect(build_stash(described_class).registry).to be_a(described_class::SqlRegistry)
     end
   end
 
-  describe ".cache=" do
-    after { described_class.cache = nil }
+  describe "#cache" do
+    it "is a MemoryStore by default" do
+      expect(build_stash(described_class).cache).to be_a(ActiveSupport::Cache::MemoryStore)
+    end
 
-    it "replaces the backing store" do
-      store = ActiveSupport::Cache::MemoryStore.new
-      described_class.cache = store
+    it "builds the store config.query_stash.cache_store names, with its options" do
+      store = build_stash(described_class, cache_store: [:memory_store, { size: 1.megabyte }]).cache
+      expect(store).to be_a(ActiveSupport::Cache::MemoryStore)
+      expect(store.instance_variable_get(:@max_size)).to eq(1.megabyte)
 
-      expect(described_class.cache).to be(store)
+      expect(build_stash(described_class, cache_store: :null_store).cache).to be_a(ActiveSupport::Cache::NullStore)
+    end
+
+    it "builds a QueryStash::FileStore under an active-record- prefixed path for :file_store" do
+      Dir.mktmpdir do |dir|
+        store = build_stash(described_class,
+                            cache_store: [:file_store, File.join(dir, "stash"), { expires_in: 60 }]).cache
+
+        expect(store).to be_a(QueryStash::FileStore)
+        expect(store.cache_path).to eq(File.join(dir, "active-record-stash"))
+        expect(store.options[:expires_in]).to eq(60)
+      end
     end
   end
 
-  describe ".cache_usage_bytes" do
-    after { described_class.cache = nil }
-
+  describe "#cache_usage_bytes" do
     it "reports the MemoryStore size" do
-      described_class.cache = ActiveSupport::Cache::MemoryStore.new
-      described_class.cache.write("key", "value")
+      stash = build_stash(described_class)
+      stash.cache.write("key", "value")
 
-      expect(described_class.cache_usage_bytes).to be_positive
+      expect(stash.cache_usage_bytes).to be_positive
     end
 
     it "reports used_memory for Redis-backed stores, refreshed at most once a minute" do
@@ -240,74 +321,69 @@ RSpec.describe QueryStash::ActiveRecord do
       stats = { "used_memory" => 1024 }
       store.define_singleton_method(:redis) { :redis }
       store.define_singleton_method(:stats) { stats.dup }
-      described_class.cache = store
-      described_class.instance_variable_set(:@_redis_cache_stats, nil)
+      stash = build_stash(described_class, cache_store: store)
 
-      expect(described_class.cache_usage_bytes).to eq(1024)
+      expect(stash.cache_usage_bytes).to eq(1024)
       stats["used_memory"] = 2048
-      expect(described_class.cache_usage_bytes).to eq(1024)
+      expect(stash.cache_usage_bytes).to eq(1024)
     end
 
     it "reports the size of a file store" do
       Dir.mktmpdir do |dir|
-        described_class.cache = described_class.file_store(File.join(dir, "cache"), lock_path: File.join(dir, "lock"))
-        described_class.instance_variable_set(:@file_cache_stats_last_updated_at, nil)
+        stash = build_stash(described_class, cache_store: [:file_store, File.join(dir, "cache")])
 
-        expect(described_class.cache).to be_a(ActiveSupport::Cache::FileStore)
-        expect(described_class.cache_usage_bytes).to be_a(Integer)
+        expect(stash.cache_usage_bytes).to be_a(Integer)
       end
     end
   end
 
   describe "cache errors" do
     let(:sql) { "SELECT * FROM users WHERE id = 1" }
-    let(:config) { Rails.application.config.query_stash }
-
-    before do
-      described_class.registry.instance_variable_set(:@rules, [])
-      described_class.registry.add_rule(/SELECT/, name: "test", ttl_seconds: 60, ttl_jitter_seconds: 0)
-
-      failing_store = ActiveSupport::Cache::MemoryStore.new
-      failing_store.define_singleton_method(:read) { |*| raise IOError, "cache is down" }
-      described_class.cache = failing_store
+    let(:failing_store) do
+      ActiveSupport::Cache::MemoryStore.new.tap do |store|
+        store.define_singleton_method(:read) { |*| raise IOError, "cache is down" }
+      end
     end
 
-    after { described_class.cache = nil }
+    def stash_with(**overrides)
+      build_stash(described_class, cache_store: failing_store, **overrides).tap do |stash|
+        stash.registry.add_rule(/SELECT/, name: "test", ttl_seconds: 60, ttl_jitter_seconds: 0)
+      end
+    end
 
     it "raises them in the test environment" do
-      expect(config.raise_on_cache_error).to be(true)
-      expect { described_class.wrap(sql, []) { "db_result" } }.to raise_error(IOError, "cache is down")
+      expect { stash_with.wrap(sql, []) { "db_result" } }.to raise_error(IOError, "cache is down")
     end
 
     it "reports them and falls back to the database when raise_on_cache_error is off" do
-      config.raise_on_cache_error = false
       allow(ActiveSupport.error_reporter).to receive(:report)
 
-      expect(described_class.wrap(sql, []) { "db_result" }).to eq("db_result")
+      expect(stash_with(raise_on_cache_error: false).wrap(sql, []) { "db_result" }).to eq("db_result")
       expect(ActiveSupport.error_reporter).to have_received(:report).with(an_instance_of(IOError), handled: true)
-    ensure
-      config.raise_on_cache_error = true
     end
   end
 
-  describe ".registry" do
-    it "returns a memoized Registry instance" do
-      expect(described_class.registry).to be_a(described_class::Registry)
-      expect(described_class.registry).to be(described_class.registry)
-    end
-  end
+  describe "#wrap" do
+    subject { stash.wrap(sql, binds) { "yielded_result" } }
 
-  describe ".wrap" do
-    subject { described_class.wrap(sql, binds) { "yielded_result" } }
-
-    let(:registry) { described_class.registry }
-    let(:cache) { described_class.cache }
+    let(:stash) { build_stash(described_class) }
+    let(:registry) { stash.registry }
+    let(:cache) { stash.cache }
     let(:sql) { "SELECT * FROM users WHERE id = 1" }
     let(:binds) { [] }
 
-    before do
-      cache.clear
-      registry.instance_variable_set(:@rules, [])
+    around { |example| stash.enable! { example.run } }
+
+    context "when the stash is not enabled" do
+      before { registry.add_rule(/SELECT/, name: "test", ttl_seconds: 60, ttl_jitter_seconds: 0) }
+
+      it "yields without caching" do
+        stash.disable! do
+          expect(subject).to eq("yielded_result")
+        end
+
+        expect(cache.read(cache_key_for(sql))).to be_nil
+      end
     end
 
     context "when binds are present" do
@@ -358,7 +434,7 @@ RSpec.describe QueryStash::ActiveRecord do
           flag[:on] = true
 
           expect(subject).to eq("yielded_result")
-          expect(described_class.wrap(sql, []) { "different" }).to eq("yielded_result")
+          expect(stash.wrap(sql, []) { "different" }).to eq("yielded_result")
         end
       end
 
@@ -373,11 +449,11 @@ RSpec.describe QueryStash::ActiveRecord do
             ttl_jitter_seconds: proc { |_result| 10 }
           )
 
-          expect(described_class.wrap(sql, []) { "yielded_result" }).to eq("yielded_result")
+          expect(stash.wrap(sql, []) { "yielded_result" }).to eq("yielded_result")
           expect(called).to be(false)
 
           # Verify cached: second call returns the same result without yielding
-          expect(described_class.wrap(sql, []) { "different" }).to eq("yielded_result")
+          expect(stash.wrap(sql, []) { "different" }).to eq("yielded_result")
         end
       end
 
@@ -391,7 +467,7 @@ RSpec.describe QueryStash::ActiveRecord do
             events << event.payload
           end
 
-          described_class.wrap(sql, []) { "yielded_result" }
+          stash.wrap(sql, []) { "yielded_result" }
 
           expect(events).to eq([{ adapter: :active_record, rule: "user_queries" }])
         ensure
@@ -409,7 +485,7 @@ RSpec.describe QueryStash::ActiveRecord do
           )
 
           yielded = false
-          result = described_class.wrap(sql, []) do
+          result = stash.wrap(sql, []) do
             yielded = true
             "yielded_result"
           end
@@ -428,7 +504,7 @@ RSpec.describe QueryStash::ActiveRecord do
           subscriber = ActiveSupport::Notifications.subscribe("cache_read.query_stash") do |event|
             events << event.payload
           end
-          described_class.wrap(sql, []) { "yielded_result" }
+          stash.wrap(sql, []) { "yielded_result" }
           events
         ensure
           ActiveSupport::Notifications.unsubscribe(subscriber)
@@ -445,28 +521,11 @@ RSpec.describe QueryStash::ActiveRecord do
         end
       end
 
-      context "when the store changes between the read and the write" do
-        let(:first_store) { ActiveSupport::Cache::MemoryStore.new }
-        let(:second_store) { ActiveSupport::Cache::MemoryStore.new }
-
-        before do
-          registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 60, ttl_jitter_seconds: 0)
-          allow(described_class).to receive(:cache).and_return(first_store, second_store)
-        end
-
-        it "reads and writes the store it picked once" do
-          described_class.wrap(sql, []) { "yielded_result" }
-
-          expect(first_store.read(cache_key_for(sql))).to eq("yielded_result")
-          expect(second_store.read(cache_key_for(sql))).to be_nil
-        end
-      end
-
       context "when TTL is zero or negative" do
         before { registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 0, ttl_jitter_seconds: 0) }
 
         it "does not cache the result" do
-          described_class.wrap(sql, []) { "yielded_result" }
+          stash.wrap(sql, []) { "yielded_result" }
 
           expect(cache.read(cache_key_for(sql))).to be_nil
         end
@@ -479,9 +538,9 @@ RSpec.describe QueryStash::ActiveRecord do
 
         it "caches the result with the TTL" do
           freeze_time do
-            described_class.wrap(sql, []) { "yielded_result" }
+            stash.wrap(sql, []) { "yielded_result" }
 
-            expect(described_class.wrap(sql, []) { "different" }).to eq("yielded_result")
+            expect(stash.wrap(sql, []) { "different" }).to eq("yielded_result")
 
             entries = cache.instance_variable_get(:@data)
             expect(entries).to have_key(cache_key_for(sql))
@@ -499,9 +558,9 @@ RSpec.describe QueryStash::ActiveRecord do
 
         it "caches the result with a TTL spread over the jitter window" do
           freeze_time do
-            described_class.wrap(sql, []) { "yielded_result" }
+            stash.wrap(sql, []) { "yielded_result" }
 
-            expect(described_class.wrap(sql, []) { "different" }).to eq("yielded_result")
+            expect(stash.wrap(sql, []) { "different" }).to eq("yielded_result")
             expires_at = cache.instance_variable_get(:@data)[cache_key_for(sql)].expires_at
             expect(expires_at).to be_between(Time.now.to_f + 120, Time.now.to_f + 150)
           end

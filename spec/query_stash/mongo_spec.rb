@@ -133,10 +133,10 @@ RSpec.describe QueryStash::Mongo do
       end.prepend(described_class).new
     end
 
+    let!(:stash) { reset_app_stash(QueryStash::Mongo) }
+
     before do
-      QueryStash::Mongo.registry.instance_variable_set(:@rules, [])
-      QueryStash::Mongo.cache.clear
-      QueryStash::Mongo.registry.add_rule(
+      stash.registry.add_rule(
         selector("test_collection", { "key" => QueryStash::Mongo::ANY }),
         name: "test",
         ttl_seconds: 60,
@@ -146,17 +146,17 @@ RSpec.describe QueryStash::Mongo do
 
     context "when the stash is enabled" do
       around do |example|
-        Mongo.with_query_stash { example.run }
+        QueryStash::Mongo[Rails.application].enable! { example.run }
       end
 
       it "uses the cache for matching queries" do
         view.each
 
-        expect(QueryStash::Mongo.cache.instance_variable_get(:@data).length).to eq(1)
+        expect(stash.cache.instance_variable_get(:@data).length).to eq(1)
       end
 
       context "when no rule matches" do
-        before { QueryStash::Mongo.registry.instance_variable_set(:@rules, []) }
+        before { stash.registry.instance_variable_set(:@rules, []) }
 
         it "streams the cursor through without buffering or caching it" do
           docs = []
@@ -165,58 +165,68 @@ RSpec.describe QueryStash::Mongo do
 
           expect(view.received_block).to be(caller_block)
           expect(docs).to eq(["original_result"])
-          expect(QueryStash::Mongo.cache.instance_variable_get(:@data)).to be_empty
+          expect(stash.cache.instance_variable_get(:@data)).to be_empty
         end
       end
     end
 
-    context "when the stash is not enabled" do
+    context "when the stash is disabled" do
       it "does not use the cache" do
-        view.each
+        stash.disable! { view.each }
 
-        expect(QueryStash::Mongo.cache.instance_variable_get(:@data).length).to eq(0)
+        expect(stash.cache.instance_variable_get(:@data).length).to eq(0)
+      end
+    end
+
+    context "when neither enable! nor disable! is active" do
+      it "follows the app's enabled" do
+        view.each
+        expect(stash.cache.instance_variable_get(:@data).length).to eq(1)
+
+        stash.cache.clear
+        allow(stash).to receive(:enabled).and_return(false)
+        view.each
+        expect(stash.cache.instance_variable_get(:@data).length).to eq(0)
       end
     end
   end
 
-  describe QueryStash::Mongo::ContextMethods do
-    describe "#with_query_stash" do
+  describe "toggling the stash" do
+    describe "#enable!" do
       it "enables the stash" do
-        expect(QueryStash::IsolatedState[:query_stash_mongo_enabled]).to be_nil
+        expect(QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]).to be_nil
 
-        Mongo.with_query_stash do
-          expect(QueryStash::IsolatedState[:query_stash_mongo_enabled]).to be(true)
+        QueryStash::Mongo[Rails.application].enable! do
+          expect(QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]).to be(true)
         end
 
-        expect(QueryStash::IsolatedState[:query_stash_mongo_enabled]).to be_nil
+        expect(QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]).to be_nil
       end
 
-      it "leaves the stash off while config.query_stash.enabled is false" do
-        Rails.application.config.query_stash.enabled = false
+      it "turns the stash on even while the app's stash is not enabled" do
+        allow(QueryStash::Mongo[Rails.application]).to receive(:enabled).and_return(false)
 
-        Mongo.with_query_stash do
-          expect(QueryStash::IsolatedState[:query_stash_mongo_enabled]).to be(false)
+        QueryStash::Mongo[Rails.application].enable! do
+          expect(QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]).to be(true)
         end
-      ensure
-        Rails.application.config.query_stash.enabled = true
       end
     end
 
-    describe "#without_query_stash" do
+    describe "#disable!" do
       around do |example|
-        Mongo.with_query_stash do
+        QueryStash::Mongo[Rails.application].enable! do
           example.run
         end
       end
 
       it "disables the stash" do
-        expect(QueryStash::IsolatedState[:query_stash_mongo_enabled]).to be(true)
+        expect(QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]).to be(true)
 
-        Mongo.without_query_stash do
-          expect(QueryStash::IsolatedState[:query_stash_mongo_enabled]).to be(false)
+        QueryStash::Mongo[Rails.application].disable! do
+          expect(QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]).to be(false)
         end
 
-        expect(QueryStash::IsolatedState[:query_stash_mongo_enabled]).to be(true)
+        expect(QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]).to be(true)
       end
     end
   end
@@ -225,98 +235,94 @@ RSpec.describe QueryStash::Mongo do
     it "enables the stash during the request and restores it afterwards" do
       seen = nil
       app = lambda do |_env|
-        seen = QueryStash::IsolatedState[:query_stash_mongo_enabled]
+        seen = QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]
         [200, {}, ["ok"]]
       end
 
-      expect(described_class.new(app).call({})).to eq([200, {}, ["ok"]])
+      expect(described_class.new(app, Rails.application).call({})).to eq([200, {}, ["ok"]])
       expect(seen).to be(true)
-      expect(QueryStash::IsolatedState[:query_stash_mongo_enabled]).to be_nil
+      expect(QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]).to be_nil
+    end
+
+    it "uses the stash of the application it was given" do
+      other_application = Object.new
+      other_stash = build_stash(QueryStash::Mongo)
+      QueryStash::Mongo.set(other_application, other_stash)
+      seen = nil
+      app = lambda do |_env|
+        seen = [QueryStash::IsolatedState[other_stash], QueryStash::IsolatedState[QueryStash::Mongo[Rails.application]]]
+        [200, {}, ["ok"]]
+      end
+
+      described_class.new(app, other_application).call({})
+
+      expect(seen).to eq([true, nil])
+    ensure
+      QueryStash::Mongo.send(:instances).delete(other_application)
     end
   end
 
-  describe ".cache" do
-    it "returns a memoized ActiveSupport::Cache::MemoryStore instance" do
-      expect(described_class.cache).to be_a(ActiveSupport::Cache::MemoryStore)
-      expect(described_class.cache).to be(described_class.cache)
+  describe "#cache" do
+    it "is a MemoryStore by default" do
+      expect(build_stash(described_class).cache).to be_a(ActiveSupport::Cache::MemoryStore)
+    end
+
+    it "builds a QueryStash::FileStore under a mongo- prefixed path for :file_store" do
+      Dir.mktmpdir do |dir|
+        store = build_stash(described_class, cache_store: [:file_store, File.join(dir, "stash")]).cache
+
+        expect(store).to be_a(QueryStash::FileStore)
+        expect(store.cache_path).to eq(File.join(dir, "mongo-stash"))
+      end
     end
   end
 
-  describe ".cache=" do
-    after { described_class.cache = nil }
-
-    it "replaces the backing store" do
-      store = ActiveSupport::Cache::MemoryStore.new
-      described_class.cache = store
-
-      expect(described_class.cache).to be(store)
+  describe "#initialize" do
+    it "builds a MongoFilterRegistry" do
+      expect(build_stash(described_class).registry).to be_a(described_class::MongoFilterRegistry)
     end
   end
 
-  describe ".cache_usage_bytes" do
-    after { described_class.cache = nil }
+  describe "#cache_usage_bytes" do
+    def redis_like_store(used)
+      ActiveSupport::Cache::MemoryStore.new.tap do |store|
+        store.define_singleton_method(:redis) { :redis }
+        store.define_singleton_method(:stats) { { "used_memory" => used } }
+      end
+    end
 
     it "reports the MemoryStore size" do
-      described_class.cache = ActiveSupport::Cache::MemoryStore.new
-      described_class.cache.write("key", "value")
+      stash = build_stash(described_class)
+      stash.cache.write("key", "value")
 
-      expect(described_class.cache_usage_bytes).to be_positive
-    end
-
-    it "reports used_memory for Redis-backed stores, refreshed at most once a minute" do
-      store = ActiveSupport::Cache::MemoryStore.new
-      stats = { "used_memory" => 1024 }
-      store.define_singleton_method(:redis) { :redis }
-      store.define_singleton_method(:stats) { stats.dup }
-      described_class.cache = store
-      described_class.instance_variable_set(:@_redis_cache_stats, nil)
-
-      expect(described_class.cache_usage_bytes).to eq(1024)
-      stats["used_memory"] = 2048
-      expect(described_class.cache_usage_bytes).to eq(1024)
+      expect(stash.cache_usage_bytes).to be_positive
     end
 
     it "tracks the once-a-minute Redis stats per store" do
-      stores = [1024, 4096].map do |used|
-        ActiveSupport::Cache::MemoryStore.new.tap do |store|
-          store.define_singleton_method(:redis) { :redis }
-          store.define_singleton_method(:stats) { { "used_memory" => used } }
-        end
-      end
-      described_class.cache = stores.first
-      described_class.instance_variable_set(:@_redis_cache_stats, nil)
-      routed = described_class.registry.class::Rule.new(
+      stash = build_stash(described_class, cache_store: redis_like_store(1024))
+      routed = described_class::Registry::Rule.new(
         selector: {}, name: "routed", ttl_seconds: 60, ttl_jitter_seconds: 0,
-        on_cache_hit: nil, on_cache_miss: nil, on_cache_skip: nil, enabled: nil, store: stores.last
+        on_cache_hit: nil, on_cache_miss: nil, on_cache_skip: nil, enabled: nil, store: redis_like_store(4096)
       )
 
-      expect(described_class.cache_usage_bytes).to eq(1024)
-      expect(described_class.cache_usage_bytes(routed)).to eq(4096)
+      expect(stash.cache_usage_bytes).to eq(1024)
+      expect(stash.cache_usage_bytes(routed)).to eq(4096)
     end
 
     it "reports the size of a file store" do
       Dir.mktmpdir do |dir|
-        described_class.cache = described_class.file_store(File.join(dir, "cache"), lock_path: File.join(dir, "lock"))
-        described_class.instance_variable_set(:@file_cache_stats_last_updated_at, nil)
+        stash = build_stash(described_class, cache_store: [:file_store, File.join(dir, "cache")])
 
-        expect(described_class.cache).to be_a(ActiveSupport::Cache::FileStore)
-        expect(described_class.cache_usage_bytes).to be_a(Integer)
+        expect(stash.cache_usage_bytes).to be_a(Integer)
       end
     end
   end
 
-  describe ".registry" do
-    it "returns a memoized Registry instance" do
-      expect(described_class.registry).to be_a(described_class::Registry)
-      expect(described_class.registry).to be(described_class.registry)
-    end
-  end
-
-  describe ".wrap" do
-    subject { described_class.wrap(view) { "yielded_result" } }
-
-    let(:registry) { described_class.registry }
-    let(:cache) { described_class.cache }
+  describe "#wrap" do
+    let(:stash) { build_stash(described_class) }
+    let(:registry) { stash.registry }
+    let(:cache) { stash.cache }
+    let(:cursor_runs) { [] }
     let(:view) do
       instance_double(
         Mongo::Collection::View,
@@ -328,43 +334,44 @@ RSpec.describe QueryStash::Mongo do
     end
     let(:rule_selector) { selector("accounts", { "token" => QueryStash::Mongo::ANY }) }
 
-    before do
-      cache.clear
-      registry.instance_variable_set(:@rules, [])
-      allow(view).to receive(:respond_to?).with(:pipeline).and_return(false)
+    around { |example| stash.enable! { example.run } }
+
+    before { allow(view).to receive(:respond_to?).with(:pipeline).and_return(false) }
+
+    # Stands in for the driver's cursor: records each run, then yields `docs` to the block it gets.
+    def documents(docs = ["db_doc"], consumer: nil)
+      stash.wrap(view, consumer) do |&iterate|
+        cursor_runs << iterate
+        docs.each(&iterate)
+      end.to_a
+    end
+
+    context "when the stash is not enabled" do
+      before { registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 60, ttl_jitter_seconds: 0) }
+
+      it "runs the cursor without caching" do
+        stash.disable! do
+          expect(documents).to eq(["db_doc"])
+        end
+
+        expect(cache.read(cache_key_for(view))).to be_nil
+      end
     end
 
     context "when no rule matches" do
-      it "yields with cacheable false and does not cache" do
-        received_cacheable = nil
-        result = described_class.wrap(view) do |cacheable:|
-          received_cacheable = cacheable
-          "yielded_result"
-        end
+      it "streams the cursor straight into the consumer, without caching" do
+        consumer = proc { |_doc| }
 
-        expect(result).to eq("yielded_result")
-        expect(received_cacheable).to be(false)
+        documents(consumer: consumer)
+
+        expect(cursor_runs).to eq([consumer])
         expect(cache.instance_variable_get(:@data)).to be_empty
       end
     end
 
     context "when a rule matches" do
-      context "when signaling cacheability to the block" do
-        before { registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 60, ttl_jitter_seconds: 0) }
-
-        it "yields with cacheable true" do
-          received_cacheable = nil
-          described_class.wrap(view) do |cacheable:|
-            received_cacheable = cacheable
-            "yielded_result"
-          end
-
-          expect(received_cacheable).to be(true)
-        end
-      end
-
       context "when cache is empty" do
-        it "yields and caches the result without calling on_cache_hit" do
+        it "loads the documents and caches them without calling on_cache_hit" do
           called = false
           registry.add_rule(
             rule_selector,
@@ -374,18 +381,26 @@ RSpec.describe QueryStash::Mongo do
             ttl_jitter_seconds: proc { |_result| 10 }
           )
 
-          expect(described_class.wrap(view) { "yielded_result" }).to eq("yielded_result")
+          expect(documents).to eq(["db_doc"])
           expect(called).to be(false)
+          expect(documents(["different"])).to eq(["db_doc"])
+          expect(cursor_runs.length).to eq(1)
+        end
 
-          # Verify cached: second call returns the same result without yielding
-          expect(described_class.wrap(view) { "different" }).to eq("yielded_result")
+        it "hands the documents to the consumer" do
+          registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 60, ttl_jitter_seconds: 0)
+          received = []
+
+          documents(%w[a b], consumer: proc { |doc| received << doc })
+
+          expect(received).to eq(%w[a b])
         end
       end
 
       context "when cache has the result" do
-        before { cache.write(cache_key_for(view), "cached_result") }
+        before { cache.write(cache_key_for(view), ["cached_doc"]) }
 
-        it "returns the cached result without yielding and calls on_cache_hit" do
+        it "returns the cached documents without running the cursor and calls on_cache_hit" do
           called_with_result = nil
           registry.add_rule(
             rule_selector,
@@ -395,15 +410,9 @@ RSpec.describe QueryStash::Mongo do
             ttl_jitter_seconds: 10
           )
 
-          yielded = false
-          result = described_class.wrap(view) do
-            yielded = true
-            "yielded_result"
-          end
-
-          expect(result).to eq("cached_result")
-          expect(yielded).to be(false)
-          expect(called_with_result).to eq("cached_result")
+          expect(documents).to eq(["cached_doc"])
+          expect(cursor_runs).to be_empty
+          expect(called_with_result).to eq(["cached_doc"])
         end
       end
 
@@ -415,7 +424,7 @@ RSpec.describe QueryStash::Mongo do
           subscriber = ActiveSupport::Notifications.subscribe("cache_read.query_stash") do |event|
             events << event.payload
           end
-          described_class.wrap(view) { "yielded_result" }
+          documents
           events
         ensure
           ActiveSupport::Notifications.unsubscribe(subscriber)
@@ -426,7 +435,7 @@ RSpec.describe QueryStash::Mongo do
         end
 
         it "marks the read as a hit when the cache has the result" do
-          cache.write(cache_key_for(view), "cached_result")
+          cache.write(cache_key_for(view), ["cached_doc"])
 
           expect(read_events).to eq([{ adapter: :mongo, rule: "accounts_by_token", hit: true }])
         end
@@ -441,38 +450,19 @@ RSpec.describe QueryStash::Mongo do
         end
 
         it "reads and writes that store and leaves the default one alone" do
-          expect(described_class.wrap(view) { "yielded_result" }).to eq("yielded_result")
+          expect(documents).to eq(["db_doc"])
 
-          expect(routed_store.read(cache_key_for(view))).to eq("yielded_result")
+          expect(routed_store.read(cache_key_for(view))).to eq(["db_doc"])
           expect(cache.instance_variable_get(:@data)).to be_empty
-          expect(described_class.wrap(view) { "different" }).to eq("yielded_result")
+          expect(documents(["different"])).to eq(["db_doc"])
         end
 
         it "measures the rule's store in cache_usage_bytes" do
-          described_class.wrap(view) { "yielded_result" }
-          rule = registry.match_rule(
-            selector("accounts", { "token" => "acct_abc123" })
-          )
+          documents
+          rule = registry.match_rule(selector("accounts", { "token" => "acct_abc123" }))
 
-          expect(described_class.cache_usage_bytes(rule)).to be_positive
-          expect(described_class.cache_usage_bytes).to eq(0)
-        end
-      end
-
-      context "when the store changes between the read and the write" do
-        let(:first_store) { ActiveSupport::Cache::MemoryStore.new }
-        let(:second_store) { ActiveSupport::Cache::MemoryStore.new }
-
-        before do
-          registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 60, ttl_jitter_seconds: 0)
-          allow(described_class).to receive(:cache_for).and_return(first_store, second_store)
-        end
-
-        it "reads and writes the store it picked once" do
-          described_class.wrap(view) { "yielded_result" }
-
-          expect(first_store.read(cache_key_for(view))).to eq("yielded_result")
-          expect(second_store.read(cache_key_for(view))).to be_nil
+          expect(stash.cache_usage_bytes(rule)).to be_positive
+          expect(stash.cache_usage_bytes).to eq(0)
         end
       end
 
@@ -480,7 +470,7 @@ RSpec.describe QueryStash::Mongo do
         before { registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 0, ttl_jitter_seconds: 0) }
 
         it "does not cache the result" do
-          described_class.wrap(view) { "yielded_result" }
+          documents
 
           expect(cache.read(cache_key_for(view))).to be_nil
         end
@@ -493,9 +483,7 @@ RSpec.describe QueryStash::Mongo do
 
         it "caches the result with the TTL" do
           freeze_time do
-            described_class.wrap(view) { "yielded_result" }
-
-            expect(described_class.wrap(view) { "different" }).to eq("yielded_result")
+            documents
 
             entries = cache.instance_variable_get(:@data)
             expect(entries).to have_key(cache_key_for(view))
@@ -511,9 +499,8 @@ RSpec.describe QueryStash::Mongo do
 
         it "caches the result with a TTL spread over the jitter window" do
           freeze_time do
-            described_class.wrap(view) { "yielded_result" }
+            documents
 
-            expect(described_class.wrap(view) { "different" }).to eq("yielded_result")
             expires_at = cache.instance_variable_get(:@data)[cache_key_for(view)].expires_at
             expect(expires_at).to be_between(Time.now.to_f + 120, Time.now.to_f + 150)
           end
