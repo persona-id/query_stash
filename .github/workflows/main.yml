@@ -58,6 +58,11 @@ jobs:
           - postgresql
           - mysql
           - mongo
+        exclude:
+          # ActiveSupport 8.0's JSON encoder passes `quirks_mode` to the json gem, which Ruby head's json
+          # no longer takes: `[1].to_json` raises, with or without QueryStash. Fixed in ActiveSupport 8.1.
+          - ruby: head
+            gemfile: gemfiles/activerecord_8_0.gemfile
         include:
           - db: sqlite3
             database_url: "sqlite3::memory:"
