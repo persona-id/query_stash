@@ -22,11 +22,11 @@ module QueryStash
       # its own options over the ones of `config.query_stash`, and the cache store they name.
       def build(adapter, config)
         options = options_for(adapter, config)
+        # What the stash reads of its config: `query_stash`, with the options in it.
+        adapter_config = ActiveSupport::OrderedOptions.new.update(query_stash: options)
 
-        adapter.new(
-          ActiveSupport::OrderedOptions.new.update(query_stash: options),
-          cache_store: build_cache_store(adapter, *Array(options.cache_store))
-        )
+        # Takes the same values as Rails' `config.cache_store`.
+        adapter.new(adapter_config, cache_store: ActiveSupport::Cache.lookup_store(*Array(options.cache_store)))
       end
 
       # `config.query_stash`, with what the adapter's own section sets on top of it. A section only
@@ -36,22 +36,6 @@ module QueryStash
         own = root[adapter.name.to_s.demodulize.underscore.to_sym] || {}
 
         ActiveSupport::OrderedOptions.new.update(root.except(*ADAPTER_SECTIONS)).update(own.slice(*ADAPTER_OPTIONS))
-      end
-
-      # Takes the same values as Rails' `config.cache_store`. `:file_store` gets a QueryStash::FileStore,
-      # with the adapter's prefix on the directory's basename so each adapter keeps its own directory:
-      # "tmp/stash" becomes "tmp/active-record-stash".
-      def build_cache_store(adapter, store, *parameters)
-        return ActiveSupport::Cache.lookup_store(store, *parameters) unless store == :file_store
-
-        require_relative "file_store"
-
-        cache_path, options = parameters
-
-        QueryStash::FileStore.new(
-          File.join(File.dirname(cache_path), "#{adapter.prefix}-#{File.basename(cache_path)}"),
-          **options.to_h
-        )
       end
     end
 

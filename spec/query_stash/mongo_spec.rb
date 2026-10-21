@@ -266,15 +266,6 @@ RSpec.describe QueryStash::Mongo do
     it "is a MemoryStore by default" do
       expect(build_stash(described_class).cache).to be_a(ActiveSupport::Cache::MemoryStore)
     end
-
-    it "builds a QueryStash::FileStore under a mongo- prefixed path for :file_store" do
-      Dir.mktmpdir do |dir|
-        store = build_stash(described_class, cache_store: [:file_store, File.join(dir, "stash")]).cache
-
-        expect(store).to be_a(QueryStash::FileStore)
-        expect(store.cache_path).to eq(File.join(dir, "mongo-stash"))
-      end
-    end
   end
 
   describe "#initialize" do

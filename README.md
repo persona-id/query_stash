@@ -148,11 +148,9 @@ config.query_stash.cache_store = :redis_cache_store, {
 config.query_stash.cache_store = :file_store, "tmp/query-stash"
 ```
 
-`:file_store` builds a `QueryStash::FileStore`, with the adapter's prefix on the directory's basename: the example above stores ActiveRecord results in `tmp/active-record-query-stash` and Mongo results in `tmp/mongo-query-stash`. Each one locks a file next to its directory (`tmp/active-record-query-stash.lock`) while it cleans up.
-
 - **MemoryStore**: one copy per process, no network hop. Keep `compress: true`; see the history for why.
 - **Redis/Valkey**: shared across processes and hosts. If several environments share one cluster, put the environment in the namespace. The cache key doesn't include it, and two environments with the same database name would otherwise read each other's entries.
-- **`file_store`**: shared by all processes on one machine. A background thread runs `cleanup` every 5 minutes, because FileStore has no LRU and no size cap. Size your rules so the directory can't fill the disk.
+- **`file_store`**: Rails' own, shared by all processes on one machine. It has no LRU and no size cap, and nothing removes the entries that expired until `cleanup` is called on it, so size your rules so the directory can't fill the disk. ActiveRecord and Mongo would share the directory: give each its own with `config.query_stash.active_record.cache_store` and `config.query_stash.mongo.cache_store`.
 
 ### Options per adapter
 

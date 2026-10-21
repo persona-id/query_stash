@@ -32,12 +32,4 @@ end
 
 RSpec.configure do |config|
   config.include StashHelpers
-
-  # A file store's background threads outlive the example otherwise.
-  config.after do
-    built_stashes.map(&:cache).each do |store|
-      store.instance_variable_get(:@metrics_thread)&.kill
-      store.instance_variable_get(:@evictor_thread)&.kill
-    end
-  end
 end

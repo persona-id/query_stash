@@ -291,17 +291,6 @@ RSpec.describe QueryStash::ActiveRecord do
 
       expect(build_stash(described_class, cache_store: :null_store).cache).to be_a(ActiveSupport::Cache::NullStore)
     end
-
-    it "builds a QueryStash::FileStore under an active-record- prefixed path for :file_store" do
-      Dir.mktmpdir do |dir|
-        store = build_stash(described_class,
-                            cache_store: [:file_store, File.join(dir, "stash"), { expires_in: 60 }]).cache
-
-        expect(store).to be_a(QueryStash::FileStore)
-        expect(store.cache_path).to eq(File.join(dir, "active-record-stash"))
-        expect(store.options[:expires_in]).to eq(60)
-      end
-    end
   end
 
   describe "cache errors" do

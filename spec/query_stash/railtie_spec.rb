@@ -93,14 +93,22 @@ RSpec.describe QueryStash::Railtie do
         expect(build(QueryStash::ActiveRecord, config).cache.instance_variable_get(:@max_size)).not_to eq(1.megabyte)
       end
 
-      it "keeps the file store of each adapter apart, under its own prefix" do
+      it "builds the store of cache_store like Rails does, with Rails' own file store for :file_store" do
         Dir.mktmpdir do |dir|
           config = config_with({ cache_store: [:file_store, File.join(dir, "stash")] },
                                mongo: { cache_store: [:file_store, File.join(dir, "other")] })
 
-          expect(build(QueryStash::ActiveRecord, config).cache.cache_path).to eq(File.join(dir, "active-record-stash"))
-          expect(build(QueryStash::Mongo, config).cache.cache_path).to eq(File.join(dir, "mongo-other"))
+          expect(build(QueryStash::ActiveRecord, config).cache).to have_attributes(
+            class: ActiveSupport::Cache::FileStore, cache_path: File.join(dir, "stash")
+          )
+          expect(build(QueryStash::Mongo, config).cache.cache_path).to eq(File.join(dir, "other"))
         end
+      end
+
+      it "hands back a store instance as it is" do
+        store = ActiveSupport::Cache::MemoryStore.new
+
+        expect(build(QueryStash::Mongo, config_with({ cache_store: store })).cache).to be(store)
       end
 
       it "ignores what a section sets that is not an adapter option" do
@@ -114,21 +122,6 @@ RSpec.describe QueryStash::Railtie do
 
         expect { build(QueryStash::ActiveRecord, config) }.not_to(change { config.query_stash.to_h })
       end
-    end
-  end
-
-  describe ".build_cache_store" do
-    it "resolves a store name and its options like Rails does" do
-      store = described_class.build_cache_store(QueryStash::ActiveRecord, :memory_store, { size: 1.megabyte })
-
-      expect(store).to be_a(ActiveSupport::Cache::MemoryStore)
-      expect(store.instance_variable_get(:@max_size)).to eq(1.megabyte)
-    end
-
-    it "hands back a store instance as it is" do
-      store = ActiveSupport::Cache::MemoryStore.new
-
-      expect(described_class.build_cache_store(QueryStash::Mongo, store)).to be(store)
     end
   end
 
