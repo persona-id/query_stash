@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "digest"
+require "json"
 require_relative "base"
 
 module QueryStash
@@ -43,7 +44,7 @@ module QueryStash
       end
     end
 
-    def prefix = "mongo"
+    def self.prefix = "mongo"
 
     # Runs the view's cursor through the stash: `cursor` iterates the view's documents into the block
     # it is given, and `consumer` is the block `each` was called with.
@@ -86,7 +87,7 @@ module QueryStash
       cache_store = cache_for(rule)
 
       rescue_cache_error do
-        cached_result = ActiveSupport::Notifications.instrument(
+        cached_result = @instrumenter.instrument(
           "cache_read.query_stash",
           adapter: :mongo,
           rule: rule.name

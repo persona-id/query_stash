@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "concurrent/map"
-require_relative "file_store"
 
 module QueryStash
   class Base
@@ -51,7 +50,7 @@ module QueryStash
         enabled: nil,
         store: nil
       )
-        raise "Rule name is required" if name.blank?
+        raise "Rule name is required" if name.nil? || name.empty?
 
         raise "Rule name #{name.inspect} is already taken" if @rules.any? { |r| r.name == name }
 
@@ -164,6 +163,20 @@ module QueryStash
       end
     end
 
+    # Used when `config.query_stash.instrumenter` is not given: runs the block and tells no one.
+    class NullInstrumenter
+      def instrument(_name, payload = {})
+        yield payload if block_given?
+      end
+    end
+
+    # Used when `config.query_stash.error_reporter` is not given.
+    class WarnErrorReporter
+      def report(error, handled: true) # rubocop:disable Lint/UnusedMethodArgument
+        warn("QueryStash: #{error.class}: #{error.message}")
+      end
+    end
+
     class << self
       def inherited(subclass)
         super
@@ -183,14 +196,20 @@ module QueryStash
     attr_reader :registry, :cache, :enabled
 
     # `config` is the Rails application's config; the stash reads `config.query_stash`.
-    def initialize(config)
+    #
+    # `cache_store` is where results are kept: any object that responds to `read(key)`,
+    # `write(key, value, expires_in:)` and `clear`, like an ActiveSupport cache store. It is not
+    # `config.query_stash.cache_store`, which names a store and is turned into one by the railtie.
+    def initialize(config, cache_store:)
       options = config.query_stash
 
       @enabled = options.enabled
       @isolated_state = options.isolated_state || ThreadVariableState.new
+      @instrumenter = options.instrumenter || NullInstrumenter.new
+      @error_reporter = options.error_reporter || WarnErrorReporter.new
       @raise_on_cache_error = options.raise_on_cache_error
       @registry = build_registry
-      @cache = build_cache_store(*Array(options.cache_store))
+      @cache = cache_store
       @redis_cache_stats = {}
     end
 
@@ -216,14 +235,14 @@ module QueryStash
       if cache_obj.respond_to?(:redis)
         updated_at, stats = @redis_cache_stats[cache_obj]
         # Only update cache stats once every minute to avoid excessive Redis calls
-        if updated_at.nil? || updated_at < 1.minute.ago
-          @redis_cache_stats[cache_obj] = [Time.current, stats]
+        if updated_at.nil? || updated_at < Time.now - 60
+          @redis_cache_stats[cache_obj] = [Time.now, stats]
           stats = cache_obj.stats
-          @redis_cache_stats[cache_obj] = [Time.current, stats]
+          @redis_cache_stats[cache_obj] = [Time.now, stats]
         end
 
         stats&.fetch("used_memory", nil)&.to_i
-      elsif cache_obj.is_a?(QueryStash::FileStore)
+      elsif cache_obj.respond_to?(:usage_bytes)
         cache_obj.usage_bytes
       else
         # WARNING: relies on internal ActiveSupport::Cache::MemoryStore API
@@ -266,20 +285,7 @@ module QueryStash
     rescue StandardError => e
       raise e if @raise_on_cache_error
 
-      ActiveSupport.error_reporter.report(e, handled: true)
-    end
-
-    # `:file_store` gets a QueryStash::FileStore, with the adapter's prefix on the directory's
-    # basename so each adapter keeps its own directory: "tmp/stash" becomes "tmp/active-record-stash".
-    def build_cache_store(store, *parameters)
-      return ActiveSupport::Cache.lookup_store(store, *parameters) unless store == :file_store
-
-      cache_path, options = parameters
-
-      QueryStash::FileStore.new(
-        File.join(File.dirname(cache_path), "#{prefix}-#{File.basename(cache_path)}"),
-        **options.to_h
-      )
+      @error_reporter.report(e, handled: true)
     end
   end
 end

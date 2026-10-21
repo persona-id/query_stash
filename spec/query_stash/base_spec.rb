@@ -71,6 +71,61 @@ RSpec.describe QueryStash::Base do
     end
   end
 
+  describe "instrumenter" do
+    let(:sql) { "SELECT 1" }
+
+    def stash_with(**overrides)
+      build_stash(QueryStash::ActiveRecord, **overrides).tap do |stash|
+        stash.registry.add_rule(/SELECT/, name: "test", ttl_seconds: 60, ttl_jitter_seconds: 0)
+      end
+    end
+
+    it "is told about cache reads" do
+      events = []
+      instrumenter = Object.new
+      instrumenter.define_singleton_method(:instrument) do |name, payload = {}, &block|
+        events << [name, payload.dup]
+        block&.call(payload)
+      end
+      stash = stash_with(instrumenter: instrumenter)
+
+      2.times { stash.wrap(sql, []) { :db } }
+
+      expect(events.map(&:first)).to eq(%w[cache_read.query_stash cache_read.query_stash cache_hit.query_stash])
+    end
+
+    it "defaults to running the block without telling anyone, when there is none" do
+      stash = stash_with(instrumenter: nil)
+
+      expect(2.times.map { stash.wrap(sql, []) { :db } }).to eq(%i[db db])
+    end
+  end
+
+  describe "error reporter" do
+    let(:failing_store) do
+      ActiveSupport::Cache::MemoryStore.new.tap do |store|
+        store.define_singleton_method(:read) { |*| raise IOError, "cache is down" }
+      end
+    end
+
+    def stash_with(**overrides)
+      build_stash(QueryStash::ActiveRecord, cache_store: failing_store, raise_on_cache_error: false, **overrides)
+        .tap { |stash| stash.registry.add_rule(/SELECT/, name: "test", ttl_seconds: 60, ttl_jitter_seconds: 0) }
+    end
+
+    it "gets the errors the stash handles" do
+      reporter = instance_double(QueryStash::Base::WarnErrorReporter, report: nil)
+
+      expect(stash_with(error_reporter: reporter).wrap("SELECT 1", []) { :db }).to eq(:db)
+      expect(reporter).to have_received(:report).with(an_instance_of(IOError), handled: true)
+    end
+
+    it "defaults to a warning on stderr, when there is none" do
+      expect { stash_with(error_reporter: nil).wrap("SELECT 1", []) { :db } }
+        .to output("QueryStash: IOError: cache is down\n").to_stderr
+    end
+  end
+
   describe "the default isolated state" do
     let(:stash) { build_stash(QueryStash::ActiveRecord, isolated_state: nil, enabled: false) }
 

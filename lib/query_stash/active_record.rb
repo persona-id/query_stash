@@ -35,7 +35,7 @@ module QueryStash
       end
     end
 
-    def prefix = "active-record"
+    def self.prefix = "active-record"
 
     # Runs the query through the stash, or just yields when the stash is off or the query isn't
     # stashable.
@@ -56,7 +56,7 @@ module QueryStash
       cache_store = cache_for(rule)
 
       rescue_cache_error do
-        cached_result = ActiveSupport::Notifications.instrument(
+        cached_result = @instrumenter.instrument(
           "cache_read.query_stash",
           adapter: :active_record,
           rule: rule.name
@@ -68,7 +68,7 @@ module QueryStash
 
         # Results are always ActiveRecord::Result (never nil), so nil means a miss.
         unless cached_result.nil?
-          ActiveSupport::Notifications.instrument("cache_hit.query_stash", adapter: :active_record, rule: rule.name)
+          @instrumenter.instrument("cache_hit.query_stash", adapter: :active_record, rule: rule.name)
           rule.on_cache_hit&.call(rule, cached_result)
           return cached_result
         end

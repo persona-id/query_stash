@@ -245,12 +245,26 @@ A stash hit never reaches the adapter, so it fires no `sql.active_record`
 event. Subscribe to `cache_hit.query_stash` if you count queries per
 request.
 
+The events go to `config.query_stash.instrumenter`, which is
+`ActiveSupport::Notifications` by default. Any object with
+`instrument(name, payload) { |payload| ... }` works.
+
 ### Errors
 
 Cache errors never fail the query: the read falls back to the database and
-a failed write is dropped. Errors go to `ActiveSupport.error_reporter`,
-except in development and test, where they are raised. Set
-`config.query_stash.raise_on_cache_error` to change that.
+a failed write is dropped. Errors go to `config.query_stash.error_reporter`
+(`ActiveSupport.error_reporter` by default; any object with
+`report(error, handled: true)` works), except in development and test, where
+they are raised. Set `config.query_stash.raise_on_cache_error` to change that.
+
+## Without Rails
+
+Only the railtie needs ActiveSupport. The rest depends on `concurrent-ruby`
+alone, and takes what it needs from the options the railtie sets: a cache
+store (any object with `read`, `write(key, value, expires_in:)` and `clear`),
+an isolated state, an instrumenter and an error reporter. Without the last
+three, it keeps its state in a thread variable, does not instrument and warns
+on stderr.
 
 ## Why this repo has history from before it existed
 

@@ -2,7 +2,7 @@ PATH
   remote: .
   specs:
     query_stash (0.1.0)
-      activesupport (>= 7.2)
+      concurrent-ruby (>= 1.0)
 
 GEM
   remote: https://rubygems.org/

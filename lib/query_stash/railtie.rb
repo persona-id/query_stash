@@ -1,14 +1,45 @@
 # frozen_string_literal: true
 
+require "active_support"
+require "active_support/cache"
 require "active_support/core_ext/numeric/bytes"
 require "active_support/isolated_execution_state"
+require "active_support/notifications"
 
+# The railtie is the only part of QueryStash that expects ActiveSupport: it hands the rest what it
+# needs from it, as options of `config.query_stash`.
 module QueryStash
   class Railtie < Rails::Railtie
+    class << self
+      # The `adapter` (QueryStash::ActiveRecord or QueryStash::Mongo) for the app's `config`, with
+      # the cache store `config.query_stash.cache_store` names.
+      def build(adapter, config)
+        adapter.new(config, cache_store: build_cache_store(adapter, *Array(config.query_stash.cache_store)))
+      end
+
+      # Takes the same values as Rails' `config.cache_store`. `:file_store` gets a QueryStash::FileStore,
+      # with the adapter's prefix on the directory's basename so each adapter keeps its own directory:
+      # "tmp/stash" becomes "tmp/active-record-stash".
+      def build_cache_store(adapter, store, *parameters)
+        return ActiveSupport::Cache.lookup_store(store, *parameters) unless store == :file_store
+
+        require_relative "file_store"
+
+        cache_path, options = parameters
+
+        QueryStash::FileStore.new(
+          File.join(File.dirname(cache_path), "#{adapter.prefix}-#{File.basename(cache_path)}"),
+          **options.to_h
+        )
+      end
+    end
+
     config.before_configuration do
       config.query_stash = ActiveSupport::OrderedOptions.new.update(
         enabled: true,
         isolated_state: ActiveSupport::IsolatedExecutionState,
+        instrumenter: ActiveSupport::Notifications,
+        error_reporter: ActiveSupport.error_reporter,
         cache_store: [:memory_store, { size: 128.megabytes, compress: true }],
         raise_on_cache_error: Rails.env.development? || Rails.env.test?
       )
@@ -23,14 +54,14 @@ module QueryStash
       if defined?(::ActiveRecord::Railtie)
         require_relative "active_record"
 
-        QueryStash::ActiveRecord.set(app, QueryStash::ActiveRecord.new(app.config))
+        QueryStash::ActiveRecord.set(app, QueryStash::Railtie.build(QueryStash::ActiveRecord, app.config))
         app.config.middleware.use QueryStash::ActiveRecord::Middleware, app
       end
 
       if defined?(::Rails::Mongoid::Railtie)
         require_relative "mongo"
 
-        QueryStash::Mongo.set(app, QueryStash::Mongo.new(app.config))
+        QueryStash::Mongo.set(app, QueryStash::Railtie.build(QueryStash::Mongo, app.config))
         app.config.middleware.use QueryStash::Mongo::Middleware, app
       end
     end
