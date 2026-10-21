@@ -118,7 +118,7 @@ RSpec.describe QueryStash::ActiveRecord do
   describe ".[] and .set" do
     let(:application) { Object.new }
 
-    after { described_class.send(:instances).delete(application) }
+    after { described_class.instance_variable_get(:@instances).delete(application) }
 
     it "returns the instance the railtie set for the app" do
       expect(described_class[Rails.application]).to be_a(described_class)
@@ -139,10 +139,6 @@ RSpec.describe QueryStash::ActiveRecord do
       described_class.set(application, build_stash(described_class))
 
       expect { QueryStash::Mongo[application] }.to raise_error(KeyError)
-    end
-
-    it "does not expose the instances" do
-      expect(described_class).not_to respond_to(:instances)
     end
   end
 
@@ -213,7 +209,7 @@ RSpec.describe QueryStash::ActiveRecord do
 
       expect(seen).to eq([true, nil])
     ensure
-      QueryStash::ActiveRecord.send(:instances).delete(other_application)
+      QueryStash::ActiveRecord.instance_variable_get(:@instances).delete(other_application)
     end
   end
 

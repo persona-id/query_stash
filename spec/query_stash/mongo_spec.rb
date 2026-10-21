@@ -258,7 +258,7 @@ RSpec.describe QueryStash::Mongo do
 
       expect(seen).to eq([true, nil])
     ensure
-      QueryStash::Mongo.send(:instances).delete(other_application)
+      QueryStash::Mongo.instance_variable_get(:@instances).delete(other_application)
     end
   end
 

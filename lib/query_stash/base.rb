@@ -122,18 +122,13 @@ module QueryStash
       end
 
       def [](app)
-        instances.fetch(app)
+        @instances.fetch(app)
       end
 
       # Makes `stash` the instance `app` uses.
       def set(app, stash)
-        instances[app] = stash
+        @instances[app] = stash
       end
-
-      private
-
-      # The instance each Rails application uses, keyed by the application.
-      attr_reader :instances
     end
 
     attr_reader :registry, :cache, :enabled
