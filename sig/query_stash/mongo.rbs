@@ -1,0 +1,90 @@
+# Generated from lib/query_stash/mongo.rb with RBS::Inline
+
+module QueryStash
+  class Mongo < Base
+    # Has a name: a collection, or a database.
+    interface _Named
+      def name: () -> String
+    end
+
+    # A `Mongo::Collection::View`, or an aggregation view.
+    interface _View
+      def collection: () -> _Named
+
+      def database: () -> _Named
+
+      def filter: () -> untyped
+
+      def options: () -> Hash[Symbol, untyped]
+
+      def each: () ?{ (untyped document) -> untyped } -> untyped
+    end
+
+    # A selector to match rules against.
+    type selector = Hash[Symbol, untyped]
+
+    # ---------------- Constants ----------------
+    # Wildcard sentinel for selector patterns
+    ANY: Object
+
+    class MongoFilterRegistry < Base::Registry
+      private
+
+      # Pattern semantics:
+      #
+      # - ANY sentinel:
+      #     pattern.equal?(ANY) => match anything as long as the key exists
+      # : (untyped actual, untyped pattern) -> bool
+      def value_matches_pattern?: (untyped actual, untyped pattern) -> bool
+    end
+
+    # Enables the stash for the duration of each request. `application` is the Rails application the
+    # middleware stack belongs to; `app` is the next middleware.
+    class Middleware
+      @app: _RackApp
+
+      @application: untyped
+
+      # : (_RackApp app, untyped application) -> void
+      def initialize: (_RackApp app, untyped application) -> void
+
+      # : (Hash[String, untyped] env) -> untyped
+      def call: (Hash[String, untyped] env) -> untyped
+    end
+
+    # @rbs module-self _View
+    module AdapterPatch : _View
+      # : () ?{ (untyped document) -> untyped } -> untyped
+      def each: () ?{ (untyped document) -> untyped } -> untyped
+    end
+
+    # Runs the view's cursor through the stash: `cursor` iterates the view's documents into the block
+    # it is given, and `consumer` is the block `each` was called with. (RBS can't say that a block takes
+    # a block, so the parameters of `cursor` are not typed.)
+    # : (_View view, ?(^(untyped) -> untyped)? consumer) { (?) -> untyped } -> untyped
+    def wrap: (_View view, ?(^(untyped) -> untyped)? consumer) { (?) -> untyped } -> untyped
+
+    # The rule the view is stashed under, or nil when it isn't to be stashed: the stash is off, or no rule
+    # matches its selector.
+    # : (_View view) -> Base::Registry::Rule?
+    def rule_for: (_View view) -> Base::Registry::Rule?
+
+    # Based off of #cache_key from Mongo::QueryCache
+    # https://github.com/mongodb/mongo-ruby-driver/blob/master/lib/mongo/query_cache.rb#L19
+    # : (_View view) -> String
+    def cache_key_for: (_View view) -> String
+
+    private
+
+    # : () -> MongoFilterRegistry
+    def build_registry: () -> MongoFilterRegistry
+
+    # Based off of #cache_options in Mongo::Collection::View::Iterable
+    # https://github.com/mongodb/mongo-ruby-driver/blob/v2.19.3/lib/mongo/collection/view/iterable.rb
+    # : (_View view) -> selector
+    def selector_for: (_View view) -> selector
+
+    # : () { (?) -> untyped } -> Array[untyped]
+    def load_documents: () { (?) -> untyped } -> Array[untyped]
+  end
+end

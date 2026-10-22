@@ -40,6 +40,7 @@ RSpec.describe "QueryStash without ActiveSupport" do
       inside = mongo.enable! { [read.call, read.call, runs] }
 
       sql = QueryStash::ActiveRecord.new(cache_store: FakeStore.new, enabled: false, raise_on_cache_error: true)
+      sql.extend(QueryStash::ActiveRecord::InternalExecQuery::Stash)
       sql.registry.add_rule(/SELECT/, name: "selects", ttl_seconds: 60, ttl_jitter_seconds: 0)
       binds = sql.enable! { sql.wrap("SELECT 1", ["bind"]) { :db } }
 

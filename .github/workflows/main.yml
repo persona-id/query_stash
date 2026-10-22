@@ -74,6 +74,7 @@ jobs:
             database_url: mongodb://127.0.0.1:27017/query_stash_test
     env:
       BUNDLE_GEMFILE: ${{ github.workspace }}/${{ matrix.gemfile }}
+      BUNDLE_WITHOUT: types
       DATABASE_URL: ${{ matrix.database_url }}
 
     steps:
@@ -91,6 +92,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     name: RuboCop
+    env:
+      BUNDLE_WITHOUT: types
 
     steps:
       - uses: actions/checkout@v6
@@ -99,7 +102,29 @@ jobs:
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
-          ruby-version: '4.0.6'
+          ruby-version: '4.0'
           bundler-cache: true
       - name: Run RuboCop
         run: bundle exec rubocop
+
+  types:
+    runs-on: ubuntu-latest
+    name: Signatures
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '4.0'
+          bundler-cache: true
+      - name: Check that sig/ is what the inline signatures export
+        run: bundle exec rake sig:verify
+      - name: Install the RBS collection
+        run: |
+          bundle exec rbs collection init
+          bundle exec rbs collection install
+      - name: Check the types
+        run: bundle exec steep check

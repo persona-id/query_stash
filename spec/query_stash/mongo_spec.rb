@@ -34,22 +34,17 @@ RSpec.describe QueryStash::Mongo do
     let(:registry) { described_class.new }
 
     describe "#add_rule" do
-      it "adds rules with selector, name, and callbacks" do
+      it "adds rules with selector, name, and blocks" do
         registry.add_rule(selector("accounts", { "token" => QueryStash::Mongo::ANY }),
                           name: "test_rule", ttl_seconds: 60, ttl_jitter_seconds: 0)
         expect(registry.rules.length).to eq(1)
         expect(registry.rules.first.name).to eq("test_rule")
 
-        callback = proc { |rule, result| }
-        registry.add_rule(selector("users", {}), name: "callback_rule", on_cache_hit: callback,
-                                                 ttl_seconds: 60, ttl_jitter_seconds: 0)
-        expect(registry.rules[1].on_cache_hit).to eq(callback)
-
         ttl_proc = proc { 60 }
         registry.add_rule(selector("posts", {}), name: "proc_rule", ttl_seconds: ttl_proc, ttl_jitter_seconds: 0)
         expect(registry.rules.last.ttl_seconds).to eq(ttl_proc)
 
-        expect(registry.rules.length).to eq(3)
+        expect(registry.rules.length).to eq(2)
       end
     end
 
@@ -327,18 +322,15 @@ RSpec.describe QueryStash::Mongo do
 
     context "when a rule matches" do
       context "when cache is empty" do
-        it "loads the documents and caches them without calling on_cache_hit" do
-          called = false
+        it "loads the documents and caches them" do
           registry.add_rule(
             rule_selector,
             name: "accounts_by_token",
-            on_cache_hit: proc { |_rule, _result| called = true },
             ttl_seconds: proc { |_result| 60 },
             ttl_jitter_seconds: proc { |_result| 10 }
           )
 
           expect(documents).to eq(["db_doc"])
-          expect(called).to be(false)
           expect(documents(["different"])).to eq(["db_doc"])
           expect(cursor_runs.length).to eq(1)
         end
@@ -360,15 +352,12 @@ RSpec.describe QueryStash::Mongo do
       end
 
       context "when a result is to be stored" do
-        it "emits cache_miss.query_stash right before on_cache_miss" do
-          order = []
-          registry.add_rule(rule_selector, name: "accounts_by_token", on_cache_miss: proc { order << :callback },
-                                           ttl_seconds: 60, ttl_jitter_seconds: 0)
-          ActiveSupport::Notifications.subscribed(->(*, payload) { order << payload }, "cache_miss.query_stash") do
-            documents
-          end
+        it "emits cache_miss.query_stash" do
+          registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 60, ttl_jitter_seconds: 0)
 
-          expect(order).to eq([{ adapter: :mongo, rule: "accounts_by_token" }, :callback])
+          events = events_of("cache_miss.query_stash") { documents }
+
+          expect(events).to eq([{ adapter: :mongo, rule: "accounts_by_token" }])
         end
 
         it "does not emit it for a result that is skipped" do
@@ -386,15 +375,12 @@ RSpec.describe QueryStash::Mongo do
       end
 
       context "when a result is skipped" do
-        it "emits cache_skip.query_stash right before on_cache_skip" do
-          order = []
-          registry.add_rule(rule_selector, name: "accounts_by_token", on_cache_skip: proc { order << :callback },
-                                           ttl_seconds: 0, ttl_jitter_seconds: 0)
-          ActiveSupport::Notifications.subscribed(->(*, payload) { order << payload }, "cache_skip.query_stash") do
-            documents
-          end
+        it "emits cache_skip.query_stash" do
+          registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 0, ttl_jitter_seconds: 0)
 
-          expect(order).to eq([{ adapter: :mongo, rule: "accounts_by_token" }, :callback])
+          events = events_of("cache_skip.query_stash") { documents }
+
+          expect(events).to eq([{ adapter: :mongo, rule: "accounts_by_token" }])
         end
 
         it "does not emit it for a result that is stored" do
@@ -414,30 +400,24 @@ RSpec.describe QueryStash::Mongo do
       context "when cache has the result" do
         before { cache.write(cache_key_for(view), ["cached_doc"]) }
 
-        it "emits cache_hit.query_stash right before on_cache_hit" do
-          order = []
-          registry.add_rule(rule_selector, name: "accounts_by_token", on_cache_hit: proc { order << :callback },
-                                           ttl_seconds: 60, ttl_jitter_seconds: 0)
-          ActiveSupport::Notifications.subscribed(->(*, payload) { order << payload }, "cache_hit.query_stash") do
-            documents
-          end
+        it "emits cache_hit.query_stash" do
+          registry.add_rule(rule_selector, name: "accounts_by_token", ttl_seconds: 60, ttl_jitter_seconds: 0)
 
-          expect(order).to eq([{ adapter: :mongo, rule: "accounts_by_token" }, :callback])
+          events = events_of("cache_hit.query_stash") { documents }
+
+          expect(events).to eq([{ adapter: :mongo, rule: "accounts_by_token" }])
         end
 
-        it "returns the cached documents without running the cursor and calls on_cache_hit" do
-          called_with_result = nil
+        it "returns the cached documents without running the cursor" do
           registry.add_rule(
             rule_selector,
             name: "accounts_by_token",
-            on_cache_hit: proc { |_rule, result| called_with_result = result },
             ttl_seconds: 60,
             ttl_jitter_seconds: 10
           )
 
           expect(documents).to eq(["cached_doc"])
           expect(cursor_runs).to be_empty
-          expect(called_with_result).to eq(["cached_doc"])
         end
       end
 

@@ -20,6 +20,7 @@ module QueryStash
     class << self
       # The `adapter` (QueryStash::ActiveRecord or QueryStash::Mongo) for the app's `config`, with
       # its own options over the ones of `config.query_stash`, and the cache store they name.
+      #: (singleton(Base) adapter, untyped config) -> Base
       def build(adapter, config)
         options = options_for(adapter, config)
 
@@ -32,6 +33,7 @@ module QueryStash
 
       # `config.query_stash`, with what the adapter's own section sets on top of it. A section only
       # holds what the user set, so an option it has, even a `false` or a `nil`, is the user's choice.
+      #: (singleton(Base) adapter, untyped config) -> untyped
       def options_for(adapter, config)
         root = config.query_stash
         own = root[adapter.name.to_s.demodulize.underscore.to_sym] || {}
@@ -40,6 +42,9 @@ module QueryStash
       end
     end
 
+    # What follows is Rails' own DSL: it runs blocks with another `self` and reaches methods that are
+    # added at runtime, so there is nothing for Steep to check it against.
+    # steep:ignore:start
     config.before_configuration do
       config.query_stash = ActiveSupport::OrderedOptions.new.update(
         enabled: true,
@@ -66,6 +71,11 @@ module QueryStash
 
         QueryStash::ActiveRecord.set(app, QueryStash::Railtie.build(QueryStash::ActiveRecord, app.config))
         app.config.middleware.use QueryStash::ActiveRecord::Middleware, app
+
+        # What the stash does for the Rails in use needs ActiveRecord.
+        ActiveSupport.on_load(:active_record) do
+          QueryStash::ActiveRecord[app].extend(QueryStash::ActiveRecord.implementation::Stash)
+        end
       end
 
       if defined?(::Rails::Mongoid::Railtie)
@@ -90,8 +100,9 @@ module QueryStash
       ActiveSupport.on_load(:active_record) do
         require_relative "active_record"
 
-        if ::ActiveRecord::ConnectionAdapters.const_defined?(:QueryIntent)
-          ::ActiveRecord::ConnectionAdapters::QueryIntent.prepend(QueryStash::ActiveRecord::IntentPatch)
+        implementation = QueryStash::ActiveRecord.implementation
+        if implementation.const_defined?(:IntentPatch)
+          ::ActiveRecord::ConnectionAdapters::QueryIntent.prepend(implementation::IntentPatch)
         end
 
         %i[
@@ -101,9 +112,8 @@ module QueryStash
           active_record_trilogyadapter
         ].each do |hook|
           ActiveSupport.on_load(hook) do
-            # Rails 8.2 runs queries as intents, earlier versions through `internal_exec_query`.
-            patch = method_defined?(:execute_intent) ? :IntentAdapterPatch : :AdapterPatch
-            prepend QueryStash::ActiveRecord.const_get(patch)
+            patch = implementation::AdapterPatch
+            prepend patch
           end
         end
       end
@@ -116,5 +126,6 @@ module QueryStash
         )
       end
     end
+    # steep:ignore:end
   end
 end

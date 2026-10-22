@@ -83,9 +83,6 @@ QueryStash::ActiveRecord[Rails.application].configure do |rules|
     name: "published_template_by_id",
     ttl_seconds: ->(result) { result.to_a.all? { |row| row["status"] == "published" } ? 1.day : 0 },
     ttl_jitter_seconds: 1.hour,
-    on_cache_hit: ->(rule, _result) { StatsD.increment("query_stash.hit", tags: ["rule:#{rule.name}"]) },
-    on_cache_miss: ->(rule, _result) { StatsD.increment("query_stash.miss", tags: ["rule:#{rule.name}"]) },
-    on_cache_skip: ->(rule, _result) { StatsD.increment("query_stash.skip", tags: ["rule:#{rule.name}"]) },
     enabled: -> { Flipper.enabled?(:stash_templates) }
   )
 end
@@ -93,7 +90,6 @@ end
 Besides the regex, the following parameters are accepted as keyword arguments:
 - `name` identifies the rule.
 - `ttl_seconds` and `ttl_jitter_seconds` are integers or callables that receive the uncached result. A TTL of 0 or less means "don't cache this result" (a *skip*). Entries are written with `expires_in: ttl_seconds + rand(ttl_jitter_seconds)`, so entries for a hot rule don't all expire at once.
-- `on_cache_hit`, `on_cache_miss` and `on_cache_skip` receive the rule and the result. A miss fires just before the write.
 - `enabled` turns a single rule off without removing it.
 
 ### Mongo rules
@@ -204,7 +200,17 @@ Without one, the stash keeps it in a thread variable: shared by the fibers of a 
 
 A stash hit never reaches the adapter, so it fires no `sql.active_record` event. Subscribe to `cache_hit.query_stash` if you count queries per request.
 
-`cache_miss.query_stash` fires right before `on_cache_miss`, when a result is about to be stored, and `cache_skip.query_stash` right before `on_cache_skip`, when its TTL says not to store it.
+`cache_miss.query_stash` fires when a result is about to be stored, and `cache_skip.query_stash` when its TTL says not to store it.
+
+To run something for a specific rule, subscribe to the event and filter on the rule's name, which is in the payload:
+
+```ruby
+ActiveSupport::Notifications.subscribe("cache_hit.query_stash") do |event|
+  next unless event.payload[:rule] == "published_template_by_id"
+
+  StatsD.increment("query_stash.hit", tags: ["rule:#{event.payload[:rule]}"])
+end
+```
 
 The events go to `config.query_stash.instrumenter`, which is `ActiveSupport::Notifications` by default. Any object with `instrument(name, payload) { |payload| ... }` works.
 
@@ -230,6 +236,49 @@ QueryStash::ActiveRecord.set(
   )
 )
 ```
+
+### Write your own stash adapter
+
+An adapter is a subclass of `QueryStash::Base` plus a patch of whatever runs its queries. The patch asks the
+stash three things, in this order:
+
+1. `rule_for(*args)`: the rule of the registry the query is stashed under, or `nil`, and then the query just runs.
+2. `read(rule, *args)`: the stored result, or `nil`.
+3. `write(rule, result, *args)`: stores the result, and returns it.
+
+`*args` is whatever identifies a query to your adapter, and is the same for `read`, `write` and `cache_key_for`.
+`rule_for` and `cache_key_for` are yours to define. `read` and `write` come from `QueryStash::Base`: they read and
+write the cache store, emit the `cache_read`, `cache_hit`, `cache_miss` and `cache_skip` events
+and handle cache errors, so override them only if you need something else. Results must never be `nil`,
+since `nil` means a miss.
+
+```ruby
+class MyDriverStash < QueryStash::Base
+  # `stashing?` is false when the stash is off.
+  def rule_for(command)
+    registry.match_rule(command.to_h) if stashing?
+  end
+
+  def cache_key_for(command)
+    "v1:#{Digest::SHA256.hexdigest(command.to_json)}"
+  end
+
+  # The patch calls this in place of running the command.
+  def wrap(command)
+    rule = rule_for(command)
+    return yield unless rule
+
+    read(rule, command) || write(rule, yield, command)
+  end
+end
+
+MyDriverStash.set(app, MyDriverStash.new(cache_store: MyCache.new))
+MyDriverStash[app].enable! { ... }
+```
+
+Override `build_registry` to return a `QueryStash::Base::Registry` subclass if your rules need their own matching,
+like the SQL and Mongo ones. The events carry the adapter's name, taken from the class name (`MyDriverStash` is
+`:my_driver_stash`).
 
 ## Why this repo has history from before it existed
 
@@ -350,6 +399,35 @@ DATABASE_URL=mongodb://127.0.0.1:27017/query_stash_test bundle exec rspec
 
 Examples tagged `database: :active_record` or `database: :mongo` only run
 against that kind of database.
+
+### Types
+
+The types are annotations in `lib/` ([rbs-inline](https://github.com/soutaro/rbs-inline)),
+checked with [Steep](https://github.com/soutaro/steep), and exported to `sig/`
+for the people who use the gem. Never edit `sig/` by hand:
+
+```sh
+bundle exec rbs collection init      # once: writes the (git-ignored) rbs_collection.yaml
+bundle exec rbs collection install   # once: the types of the gems we call into
+bundle exec rake sig:export          # lib/ annotations -> sig/
+bundle exec rake types               # sig/ is up to date, and steep check passes
+```
+
+Every file in `lib/` is exported (`rbs-inline --opt-out`, which the Rake tasks use), so a new
+file has signatures from the start, `untyped` ones until it is annotated. A file can opt out with
+`# rbs_inline: disabled`.
+
+CI runs the last one (`rake sig:verify`, then `steep check`), so a change to an
+annotation has to come with the re-exported `sig/`.
+
+- `sig_stubs/` has what neither the annotations nor the collection cover: a few
+  parts of the Mongo driver and Rails.
+- The Rails DSL in `lib/query_stash/railtie.rb` is not type checked
+  (`# steep:ignore`): Rails runs those blocks with another `self`, and the
+  collection has no types for them.
+- Annotate with `#: (String) -> Integer` above a `def`. Multi-line types need
+  `# @rbs param: Type` lines instead, and `Data.define` blocks are not read, so
+  reopen the class to add methods (see `Registry::Rule`).
 
 ## License
 

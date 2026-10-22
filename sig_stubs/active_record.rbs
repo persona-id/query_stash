@@ -1,0 +1,12 @@
+# The parts of ActiveRecord the code uses that rbs_collection.yaml's types leave out.
+module ActiveRecord
+  class Base
+    def self.current_shard: () -> Symbol
+  end
+
+  module ConnectionAdapters
+    # From Rails 8.2.
+    class QueryIntent
+    end
+  end
+end
