@@ -395,10 +395,6 @@ module QueryStash
     #: [T] () { () -> T } -> untyped
     def rescue_cache_error(&block)
       block.call
-    rescue Errno::ENOENT
-      # file store cache may raise these errors when there's a conflict with the
-      # cleanup making files disappear.
-      nil
     rescue StandardError => e
       raise e if @raise_on_cache_error
 
