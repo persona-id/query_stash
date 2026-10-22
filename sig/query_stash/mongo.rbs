@@ -64,17 +64,27 @@ module QueryStash
     # : (_View view, ?(^(untyped) -> untyped)? consumer) { (?) -> untyped } -> untyped
     def wrap: (_View view, ?(^(untyped) -> untyped)? consumer) { (?) -> untyped } -> untyped
 
+    # The rule the view is stashed under, or nil when it isn't to be stashed: the stash is off, or no rule
+    # matches its selector.
+    # : (_View view) -> Base::Registry::Rule?
+    def rule_for: (_View view) -> Base::Registry::Rule?
+
+    # Based off of #cache_key from Mongo::QueryCache
+    # https://github.com/mongodb/mongo-ruby-driver/blob/master/lib/mongo/query_cache.rb#L19
+    # : (_View view) -> String
+    def cache_key_for: (_View view) -> String
+
     private
 
     # : () -> MongoFilterRegistry
     def build_registry: () -> MongoFilterRegistry
 
-    # : (String cache_key, Base::Registry::Rule rule) { () -> Array[untyped] } -> Array[untyped]
-    def fetch: (String cache_key, Base::Registry::Rule rule) { () -> Array[untyped] } -> Array[untyped]
+    # Based off of #cache_options in Mongo::Collection::View::Iterable
+    # https://github.com/mongodb/mongo-ruby-driver/blob/v2.19.3/lib/mongo/collection/view/iterable.rb
+    # : (_View view) -> selector
+    def selector_for: (_View view) -> selector
 
-    # Based off of #cache_key from Mongo::QueryCache
-    # https://github.com/mongodb/mongo-ruby-driver/blob/master/lib/mongo/query_cache.rb#L19
-    # : (String database_name, selector selector) -> String
-    def cache_key_for: (String database_name, selector selector) -> String
+    # : () { (?) -> untyped } -> Array[untyped]
+    def load_documents: () { (?) -> untyped } -> Array[untyped]
   end
 end

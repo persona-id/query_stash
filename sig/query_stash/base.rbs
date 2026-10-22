@@ -152,6 +152,8 @@ module QueryStash
     # : (untyped app, instance stash) -> instance
     def self.set: (untyped app, instance stash) -> instance
 
+    @adapter: Symbol
+
     @cache: _CacheStore
 
     @registry: Registry
@@ -203,6 +205,27 @@ module QueryStash
 
     # : (Registry::Rule rule) -> _CacheStore
     def cache_for: (Registry::Rule rule) -> _CacheStore
+
+    # The rule of the registry the query is to be stashed under, or nil when it isn't to be: the stash is off
+    # (see `stashing?`), the query is not one that can be, or no rule matches it.
+    # : (*untyped) -> Registry::Rule?
+    def rule_for: (*untyped) -> Registry::Rule?
+
+    # The key the query's result is stored under.
+    # : (*untyped) -> String
+    def cache_key_for: (*untyped) -> String
+
+    # The result stored for the query, or nil when there is none (or the cache store failed: that is
+    # reported, or raised when `raise_on_cache_error` is set). Emits `cache_read` and, on a hit,
+    # `cache_hit`, and calls the rule's `on_cache_hit`.
+    # : (Registry::Rule rule, *untyped args) -> untyped
+    def read: (Registry::Rule rule, *untyped args) -> untyped
+
+    # Stores `result` for the query when the rule keeps results for any time (else it is skipped), and
+    # returns it. Emits `cache_miss` or, when skipped, `cache_skip`, and calls the rule's `on_cache_miss`
+    # or `on_cache_skip`. A failure of the cache store is reported (or raised), and does not lose the result.
+    # : (Registry::Rule rule, untyped result, *untyped args) -> untyped
+    def write: (Registry::Rule rule, untyped result, *untyped args) -> untyped
 
     private
 

@@ -231,6 +231,49 @@ QueryStash::ActiveRecord.set(
 )
 ```
 
+### Write your own stash adapter
+
+An adapter is a subclass of `QueryStash::Base` plus a patch of whatever runs its queries. The patch asks the
+stash three things, in this order:
+
+1. `rule_for(*args)`: the rule of the registry the query is stashed under, or `nil`, and then the query just runs.
+2. `read(rule, *args)`: the stored result, or `nil`.
+3. `write(rule, result, *args)`: stores the result, and returns it.
+
+`*args` is whatever identifies a query to your adapter, and is the same for `read`, `write` and `cache_key_for`.
+`rule_for` and `cache_key_for` are yours to define. `read` and `write` come from `QueryStash::Base`: they read and
+write the cache store, emit the `cache_read`, `cache_hit`, `cache_miss` and `cache_skip` events, call the rule's
+callbacks and handle cache errors, so override them only if you need something else. Results must never be `nil`,
+since `nil` means a miss.
+
+```ruby
+class MyDriverStash < QueryStash::Base
+  # `stashing?` is false when the stash is off.
+  def rule_for(command)
+    registry.match_rule(command.to_h) if stashing?
+  end
+
+  def cache_key_for(command)
+    "v1:#{Digest::SHA256.hexdigest(command.to_json)}"
+  end
+
+  # The patch calls this in place of running the command.
+  def wrap(command)
+    rule = rule_for(command)
+    return yield unless rule
+
+    read(rule, command) || write(rule, yield, command)
+  end
+end
+
+MyDriverStash.set(app, MyDriverStash.new(cache_store: MyCache.new))
+MyDriverStash[app].enable! { ... }
+```
+
+Override `build_registry` to return a `QueryStash::Base::Registry` subclass if your rules need their own matching,
+like the SQL and Mongo ones. The events carry the adapter's name, taken from the class name (`MyDriverStash` is
+`:my_driver_stash`).
+
 ## Why this repo has history from before it existed
 
 QueryStash ran in production as `ProcessQueryCache` inside Persona's Rails

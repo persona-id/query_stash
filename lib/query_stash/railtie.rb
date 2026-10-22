@@ -71,6 +71,11 @@ module QueryStash
 
         QueryStash::ActiveRecord.set(app, QueryStash::Railtie.build(QueryStash::ActiveRecord, app.config))
         app.config.middleware.use QueryStash::ActiveRecord::Middleware, app
+
+        # What the stash does for the Rails in use needs ActiveRecord.
+        ActiveSupport.on_load(:active_record) do
+          QueryStash::ActiveRecord[app].extend(QueryStash::ActiveRecord.implementation::Stash)
+        end
       end
 
       if defined?(::Rails::Mongoid::Railtie)
@@ -95,8 +100,9 @@ module QueryStash
       ActiveSupport.on_load(:active_record) do
         require_relative "active_record"
 
-        if ::ActiveRecord::ConnectionAdapters.const_defined?(:QueryIntent)
-          ::ActiveRecord::ConnectionAdapters::QueryIntent.prepend(QueryStash::ActiveRecord::IntentPatch)
+        implementation = QueryStash::ActiveRecord.implementation
+        if implementation.const_defined?(:IntentPatch)
+          ::ActiveRecord::ConnectionAdapters::QueryIntent.prepend(implementation::IntentPatch)
         end
 
         %i[
@@ -106,9 +112,8 @@ module QueryStash
           active_record_trilogyadapter
         ].each do |hook|
           ActiveSupport.on_load(hook) do
-            # Rails 8.2 runs queries as intents, earlier versions through `internal_exec_query`.
-            patch = method_defined?(:execute_intent) ? :IntentAdapterPatch : :AdapterPatch
-            prepend QueryStash::ActiveRecord.const_get(patch)
+            patch = implementation::AdapterPatch
+            prepend patch
           end
         end
       end

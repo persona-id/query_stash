@@ -36,9 +36,7 @@ RSpec.describe "QueryStash::ActiveRecord against the dummy app's database", data
   end
 
   it "patches the adapter the app connects with" do
-    patch = Post.connection.class.method_defined?(:execute_intent) ? :IntentAdapterPatch : :AdapterPatch
-
-    expect(Post.connection.class.ancestors).to include(QueryStash::ActiveRecord.const_get(patch))
+    expect(Post.connection.class.ancestors).to include(QueryStash::ActiveRecord.implementation::AdapterPatch)
   end
 
   it "serves repeated lookups of a published row from the stash" do

@@ -8,7 +8,14 @@ module StashHelpers
                                                       .update(Rails.application.config.query_stash)
                                                       .update(overrides)
 
-    QueryStash::Railtie.build(adapter, config)
+    with_wrap(QueryStash::Railtie.build(adapter, config))
+  end
+
+  # The specs of the ActiveRecord stash call `wrap`, which only the stash of the Rails up to 8.1 has: give
+  # it to the stash whatever the Rails in use.
+  def with_wrap(stash)
+    stash.extend(QueryStash::ActiveRecord::InternalExecQuery::Stash) if stash.is_a?(QueryStash::ActiveRecord)
+    stash
   end
 
   # The payloads of the `name` notifications the block emits.
@@ -23,7 +30,7 @@ module StashHelpers
 
   # The app's own stash, with its rules and default store emptied.
   def reset_app_stash(adapter)
-    adapter[Rails.application].tap do |stash|
+    with_wrap(adapter[Rails.application]).tap do |stash|
       stash.registry.instance_variable_set(:@rules, [])
       stash.cache.clear
     end

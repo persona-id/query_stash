@@ -64,7 +64,7 @@ RSpec.describe QueryStash::ActiveRecord do
     end
   end
 
-  describe QueryStash::ActiveRecord::AdapterPatch do
+  describe QueryStash::ActiveRecord::InternalExecQuery::AdapterPatch do
     let(:adapter) do
       Class.new do
         def internal_exec_query(_sql, _name = "SQL", _binds = [], **)
@@ -228,7 +228,7 @@ RSpec.describe QueryStash::ActiveRecord do
           @db_call_count += 1
           "db_result"
         end
-      end.prepend(QueryStash::ActiveRecord::AdapterPatch).new
+      end.prepend(QueryStash::ActiveRecord::InternalExecQuery::AdapterPatch).new
     end
 
     let(:sql) { "SELECT * FROM organizations WHERE organizations.id = 1" }
