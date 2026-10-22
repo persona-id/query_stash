@@ -2,5 +2,6 @@
 
 Rails.application.routes.draw do
   get "/posts/:id", to: "posts#show"
+  get "/sequel_posts/:id", to: "sequel_posts#show"
   get "/mongo_posts/:id", to: "mongo_posts#show"
 end

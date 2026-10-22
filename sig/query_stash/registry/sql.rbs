@@ -1,0 +1,11 @@
+# Generated from lib/query_stash/registry/sql.rb with RBS::Inline
+
+module QueryStash
+  class Registry
+    # The rules of the adapters that stash SQL: a rule's selector is a regexp, matched against the query.
+    class Sql < Registry
+      # @rbs override
+      def add_rule: ...
+    end
+  end
+end

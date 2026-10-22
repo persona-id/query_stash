@@ -19,6 +19,7 @@ gem "railties", ">= 7.2"
 gem "mongo", "~> 2.19.0"
 gem "mongoid", "~> 9.0"
 gem "pg"
+gem "sequel-rails"
 gem "sqlite3"
 gem "trilogy"
 

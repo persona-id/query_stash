@@ -2,6 +2,7 @@
 
 require "digest"
 require_relative "base"
+require_relative "registry/sql"
 
 module QueryStash
   class ActiveRecord < Base
@@ -33,15 +34,6 @@ module QueryStash
 
     CACHEABLE_SQL_REGEX = /\ASELECT/i #: Regexp
     private_constant :CACHEABLE_SQL_REGEX
-
-    class SqlRegistry < Base::Registry
-      # @rbs override
-      def add_rule(regex, ...)
-        raise Error, "regex must be a Regexp, got #{regex.class}" if regex.class != Regexp
-
-        super
-      end
-    end
 
     # Enables the stash for the duration of each request.
     class Middleware
@@ -123,7 +115,7 @@ module QueryStash
 
       # @rbs module-self QueryStash::ActiveRecord
       module Stash
-        # @rbs @intent_rules: ObjectSpace::WeakMap[_QueryIntent, Base::Registry::Rule]
+        # @rbs @intent_rules: ObjectSpace::WeakMap[_QueryIntent, Registry::Rule]
 
         # The rule each intent that missed the stash is to be stored under, until its result is cast.
         #: (QueryStash::ActiveRecord stash) -> void
@@ -167,7 +159,7 @@ module QueryStash
 
     # The rule the query is stashed under, or nil when it isn't to be stashed: the stash is off, it has
     # binds (not supported), it is not a SELECT, or no rule matches it.
-    #: (String sql, ?has_binds: bool?) -> Base::Registry::Rule?
+    #: (String sql, ?has_binds: bool?) -> Registry::Rule?
     def rule_for(sql, has_binds: false)
       return unless stashing?
       return if has_binds
@@ -188,9 +180,9 @@ module QueryStash
 
     private
 
-    #: () -> SqlRegistry
+    #: () -> Registry::Sql
     def build_registry
-      SqlRegistry.new
+      Registry::Sql.new
     end
   end
 end

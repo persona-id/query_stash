@@ -5,6 +5,12 @@ require "active_job/railtie"
 require "active_record/railtie"
 require "action_controller/railtie"
 require "mongoid"
+require "sequel-rails"
+
+# DATABASE_URL is ActiveRecord's, which spells SQLite `sqlite3`: sequel-rails connects with it too.
+require "sequel/adapters/sqlite"
+Sequel::SQLite::Database.send(:set_adapter_scheme, :sqlite3)
+
 require "query_stash"
 
 # The engine under test comes from DATABASE_URL, e.g.:
