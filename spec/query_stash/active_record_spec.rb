@@ -12,7 +12,7 @@ RSpec.describe QueryStash::ActiveRecord do
     let(:registry) { described_class.new }
 
     describe "#add_rule" do
-      it "adds rules with regex, name, callbacks, and blocks" do
+      it "adds rules with regex, name, and blocks" do
         enabled = -> { true }
         registry.add_rule(/SELECT/, name: "test_rule", ttl_seconds: 60, ttl_jitter_seconds: 0, enabled: enabled)
         expect(registry.rules.length).to eq(1)
@@ -20,16 +20,11 @@ RSpec.describe QueryStash::ActiveRecord do
         expect(registry.rules.first.name).to eq("test_rule")
         expect(registry.rules.first.enabled).to eq(enabled)
 
-        callback = proc { |rule, result| }
-        registry.add_rule(/UPDATE/, name: "callback_rule", on_cache_hit: callback,
-                                    ttl_seconds: 60, ttl_jitter_seconds: 0)
-        expect(registry.rules[1].on_cache_hit).to eq(callback)
-
         ttl_proc = proc { 60 }
         registry.add_rule(/INSERT/, name: "proc_rule", ttl_seconds: ttl_proc, ttl_jitter_seconds: 0)
         expect(registry.rules.last.ttl_seconds).to eq(ttl_proc)
 
-        expect(registry.rules.length).to eq(3)
+        expect(registry.rules.length).to eq(2)
       end
     end
 
@@ -395,18 +390,15 @@ RSpec.describe QueryStash::ActiveRecord do
       end
 
       context "when cache is empty" do
-        it "yields and caches the result without calling on_cache_hit" do
-          called = false
+        it "yields and caches the result" do
           registry.add_rule(
             /SELECT.*users/,
             name: "user_queries",
-            on_cache_hit: proc { |_rule, _result| called = true },
             ttl_seconds: proc { |_result| 60 },
             ttl_jitter_seconds: proc { |_result| 10 }
           )
 
           expect(stash.wrap(sql, []) { "yielded_result" }).to eq("yielded_result")
-          expect(called).to be(false)
 
           # Verify cached: second call returns the same result without yielding
           expect(stash.wrap(sql, []) { "different" }).to eq("yielded_result")
@@ -414,15 +406,12 @@ RSpec.describe QueryStash::ActiveRecord do
       end
 
       context "when a result is to be stored" do
-        it "emits cache_miss.query_stash right before on_cache_miss" do
-          order = []
-          registry.add_rule(/SELECT.*users/, name: "user_queries", on_cache_miss: proc { order << :callback },
-                                             ttl_seconds: 60, ttl_jitter_seconds: 0)
-          ActiveSupport::Notifications.subscribed(->(*, payload) { order << payload }, "cache_miss.query_stash") do
-            stash.wrap(sql, []) { "yielded_result" }
-          end
+        it "emits cache_miss.query_stash" do
+          registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 60, ttl_jitter_seconds: 0)
 
-          expect(order).to eq([{ adapter: :active_record, rule: "user_queries" }, :callback])
+          events = events_of("cache_miss.query_stash") { stash.wrap(sql, []) { "yielded_result" } }
+
+          expect(events).to eq([{ adapter: :active_record, rule: "user_queries" }])
         end
 
         it "does not emit it for a result that is skipped" do
@@ -440,15 +429,12 @@ RSpec.describe QueryStash::ActiveRecord do
       end
 
       context "when a result is skipped" do
-        it "emits cache_skip.query_stash right before on_cache_skip" do
-          order = []
-          registry.add_rule(/SELECT.*users/, name: "user_queries", on_cache_skip: proc { order << :callback },
-                                             ttl_seconds: 0, ttl_jitter_seconds: 0)
-          ActiveSupport::Notifications.subscribed(->(*, payload) { order << payload }, "cache_skip.query_stash") do
-            stash.wrap(sql, []) { "yielded_result" }
-          end
+        it "emits cache_skip.query_stash" do
+          registry.add_rule(/SELECT.*users/, name: "user_queries", ttl_seconds: 0, ttl_jitter_seconds: 0)
 
-          expect(order).to eq([{ adapter: :active_record, rule: "user_queries" }, :callback])
+          events = events_of("cache_skip.query_stash") { stash.wrap(sql, []) { "yielded_result" } }
+
+          expect(events).to eq([{ adapter: :active_record, rule: "user_queries" }])
         end
 
         it "does not emit it for a result that is stored" do
@@ -482,12 +468,10 @@ RSpec.describe QueryStash::ActiveRecord do
           ActiveSupport::Notifications.unsubscribe(subscriber)
         end
 
-        it "returns the cached result without yielding and calls on_cache_hit" do
-          called_with_result = nil
+        it "returns the cached result without yielding" do
           registry.add_rule(
             /SELECT.*users/,
             name: "user_queries",
-            on_cache_hit: proc { |_rule, result| called_with_result = result },
             ttl_seconds: 60,
             ttl_jitter_seconds: 10
           )
@@ -500,7 +484,6 @@ RSpec.describe QueryStash::ActiveRecord do
 
           expect(result).to eq("cached_result")
           expect(yielded).to be(false)
-          expect(called_with_result).to eq("cached_result")
         end
       end
 

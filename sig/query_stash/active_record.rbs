@@ -2,12 +2,12 @@
 
 module QueryStash
   class ActiveRecord < Base
-    # An adapter, up to Rails 8.1.
+    # An ActiveRecord adapter, up to Rails 8.1.
     interface _InternalExecQueryAdapter
       def internal_exec_query: (String sql, ?String name, ?Array[untyped] binds, **untyped) -> ::ActiveRecord::Result
     end
 
-    # An adapter, from Rails 8.2.
+    # An ActiveRecord adapter, from Rails 8.2.
     interface _IntentAdapter
       def execute_intent: (_QueryIntent intent) -> untyped
 
@@ -32,8 +32,7 @@ module QueryStash
       def add_rule: ...
     end
 
-    # Enables the stash for the duration of each request. `application` is the Rails application the
-    # middleware stack belongs to; `app` is the next middleware.
+    # Enables the stash for the duration of each request.
     class Middleware
       @app: _RackApp
 
@@ -46,7 +45,8 @@ module QueryStash
       def call: (Hash[String, untyped] env) -> untyped
     end
 
-    # Rails 7.2 to 8.1 run every query through `internal_exec_query`.
+    # Patch wraps queries run through `internal_exec_query` (rails 7.2 to 8.1).
+    # See `QueryStash::ActiveRecord.implementation`.
     module InternalExecQuery
       # @rbs module-self _InternalExecQueryAdapter
       module AdapterPatch : _InternalExecQueryAdapter
@@ -64,9 +64,7 @@ module QueryStash
     end
 
     # Rails 8.2 runs queries as intents: the adapter's `execute_intent` runs one and hands its raw result
-    # back to the intent, which turns it into an ActiveRecord::Result in `QueryIntent#cast_result`. So a
-    # stash hit is delivered to the intent in place of running it, and a miss is stored once the intent
-    # has cast its result.
+    # back to the intent, which turns it into an ActiveRecord::Result in `QueryIntent#cast_result`.
     module ExecuteIntent
       # @rbs module-self _IntentAdapter
       module AdapterPatch : _IntentAdapter

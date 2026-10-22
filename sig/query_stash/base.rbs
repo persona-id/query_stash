@@ -6,9 +6,6 @@ module QueryStash
       # How long a result is kept: a number of seconds, or something that works it out from the result.
       type ttl = _ToI | ^(untyped result) -> _ToI
 
-      # Called with the rule and the result.
-      type callback = ^(Rule rule, untyped result) -> untyped
-
       class Rule < Data
         attr_reader selector(): untyped
 
@@ -18,22 +15,16 @@ module QueryStash
 
         attr_reader ttl_jitter_seconds(): ttl
 
-        attr_reader on_cache_hit(): callback?
-
-        attr_reader on_cache_miss(): callback?
-
-        attr_reader on_cache_skip(): callback?
-
         attr_reader enabled(): (^() -> boolish)?
 
         attr_reader store(): _CacheStore?
 
-        def self.new: (untyped selector, String name, ttl ttl_seconds, ttl ttl_jitter_seconds, callback? on_cache_hit, callback? on_cache_miss, callback? on_cache_skip, (^() -> boolish)? enabled, _CacheStore? store) -> instance
-                    | (selector: untyped, name: String, ttl_seconds: ttl, ttl_jitter_seconds: ttl, on_cache_hit: callback?, on_cache_miss: callback?, on_cache_skip: callback?, enabled: (^() -> boolish)?, store: _CacheStore?) -> instance
+        def self.new: (untyped selector, String name, ttl ttl_seconds, ttl ttl_jitter_seconds, (^() -> boolish)? enabled, _CacheStore? store) -> instance
+                    | (selector: untyped, name: String, ttl_seconds: ttl, ttl_jitter_seconds: ttl, enabled: (^() -> boolish)?, store: _CacheStore?) -> instance
 
-        def self.members: () -> [ :selector, :name, :ttl_seconds, :ttl_jitter_seconds, :on_cache_hit, :on_cache_miss, :on_cache_skip, :enabled, :store ]
+        def self.members: () -> [ :selector, :name, :ttl_seconds, :ttl_jitter_seconds, :enabled, :store ]
 
-        def members: () -> [ :selector, :name, :ttl_seconds, :ttl_jitter_seconds, :on_cache_hit, :on_cache_miss, :on_cache_skip, :enabled, :store ]
+        def members: () -> [ :selector, :name, :ttl_seconds, :ttl_jitter_seconds, :enabled, :store ]
       end
 
       class Rule
@@ -57,13 +48,10 @@ module QueryStash
       # @rbs name: String
       # @rbs ttl_seconds: ttl
       # @rbs ttl_jitter_seconds: ttl
-      # @rbs on_cache_hit: callback?
-      # @rbs on_cache_miss: callback?
-      # @rbs on_cache_skip: callback?
       # @rbs enabled: (^() -> boolish)?
       # @rbs store: _CacheStore?
       # @rbs return: Array[Rule]
-      def add_rule: (untyped selector, name: String, ttl_seconds: ttl, ttl_jitter_seconds: ttl, ?on_cache_hit: callback?, ?on_cache_miss: callback?, ?on_cache_skip: callback?, ?enabled: (^() -> boolish)?, ?store: _CacheStore?) -> Array[Rule]
+      def add_rule: (untyped selector, name: String, ttl_seconds: ttl, ttl_jitter_seconds: ttl, ?enabled: (^() -> boolish)?, ?store: _CacheStore?) -> Array[Rule]
 
       # : (String name) -> Array[Rule]
       def delete_rule: (String name) -> Array[Rule]
@@ -217,13 +205,13 @@ module QueryStash
 
     # The result stored for the query, or nil when there is none (or the cache store failed: that is
     # reported, or raised when `raise_on_cache_error` is set). Emits `cache_read` and, on a hit,
-    # `cache_hit`, and calls the rule's `on_cache_hit`.
+    # `cache_hit`.
     # : (Registry::Rule rule, *untyped args) -> untyped
     def read: (Registry::Rule rule, *untyped args) -> untyped
 
     # Stores `result` for the query when the rule keeps results for any time (else it is skipped), and
-    # returns it. Emits `cache_miss` or, when skipped, `cache_skip`, and calls the rule's `on_cache_miss`
-    # or `on_cache_skip`. A failure of the cache store is reported (or raised), and does not lose the result.
+    # returns it. Emits `cache_miss` or, when skipped, `cache_skip`.
+    # A failure of the cache store is reported (or raised), and does not lose the result.
     # : (Registry::Rule rule, untyped result, *untyped args) -> untyped
     def write: (Registry::Rule rule, untyped result, *untyped args) -> untyped
 

@@ -83,9 +83,6 @@ QueryStash::ActiveRecord[Rails.application].configure do |rules|
     name: "published_template_by_id",
     ttl_seconds: ->(result) { result.to_a.all? { |row| row["status"] == "published" } ? 1.day : 0 },
     ttl_jitter_seconds: 1.hour,
-    on_cache_hit: ->(rule, _result) { StatsD.increment("query_stash.hit", tags: ["rule:#{rule.name}"]) },
-    on_cache_miss: ->(rule, _result) { StatsD.increment("query_stash.miss", tags: ["rule:#{rule.name}"]) },
-    on_cache_skip: ->(rule, _result) { StatsD.increment("query_stash.skip", tags: ["rule:#{rule.name}"]) },
     enabled: -> { Flipper.enabled?(:stash_templates) }
   )
 end
@@ -93,7 +90,6 @@ end
 Besides the regex, the following parameters are accepted as keyword arguments:
 - `name` identifies the rule.
 - `ttl_seconds` and `ttl_jitter_seconds` are integers or callables that receive the uncached result. A TTL of 0 or less means "don't cache this result" (a *skip*). Entries are written with `expires_in: ttl_seconds + rand(ttl_jitter_seconds)`, so entries for a hot rule don't all expire at once.
-- `on_cache_hit`, `on_cache_miss` and `on_cache_skip` receive the rule and the result. A miss fires just before the write.
 - `enabled` turns a single rule off without removing it.
 
 ### Mongo rules
@@ -204,7 +200,17 @@ Without one, the stash keeps it in a thread variable: shared by the fibers of a 
 
 A stash hit never reaches the adapter, so it fires no `sql.active_record` event. Subscribe to `cache_hit.query_stash` if you count queries per request.
 
-`cache_miss.query_stash` fires right before `on_cache_miss`, when a result is about to be stored, and `cache_skip.query_stash` right before `on_cache_skip`, when its TTL says not to store it.
+`cache_miss.query_stash` fires when a result is about to be stored, and `cache_skip.query_stash` when its TTL says not to store it.
+
+To run something for a specific rule, subscribe to the event and filter on the rule's name, which is in the payload:
+
+```ruby
+ActiveSupport::Notifications.subscribe("cache_hit.query_stash") do |event|
+  next unless event.payload[:rule] == "published_template_by_id"
+
+  StatsD.increment("query_stash.hit", tags: ["rule:#{event.payload[:rule]}"])
+end
+```
 
 The events go to `config.query_stash.instrumenter`, which is `ActiveSupport::Notifications` by default. Any object with `instrument(name, payload) { |payload| ... }` works.
 
@@ -242,8 +248,8 @@ stash three things, in this order:
 
 `*args` is whatever identifies a query to your adapter, and is the same for `read`, `write` and `cache_key_for`.
 `rule_for` and `cache_key_for` are yours to define. `read` and `write` come from `QueryStash::Base`: they read and
-write the cache store, emit the `cache_read`, `cache_hit`, `cache_miss` and `cache_skip` events, call the rule's
-callbacks and handle cache errors, so override them only if you need something else. Results must never be `nil`,
+write the cache store, emit the `cache_read`, `cache_hit`, `cache_miss` and `cache_skip` events
+and handle cache errors, so override them only if you need something else. Results must never be `nil`,
 since `nil` means a miss.
 
 ```ruby

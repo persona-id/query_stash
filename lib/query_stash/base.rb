@@ -8,18 +8,12 @@ module QueryStash
       # @rbs!
       #   # How long a result is kept: a number of seconds, or something that works it out from the result.
       #   type ttl = _ToI | ^(untyped result) -> _ToI
-      #
-      #   # Called with the rule and the result.
-      #   type callback = ^(Rule rule, untyped result) -> untyped
 
       Rule = Data.define(
         :selector, #: untyped
         :name, #: String
         :ttl_seconds, #: ttl
         :ttl_jitter_seconds, #: ttl
-        :on_cache_hit, #: callback?
-        :on_cache_miss, #: callback?
-        :on_cache_skip, #: callback?
         :enabled, #: (^() -> boolish)?
         :store #: _CacheStore?
       )
@@ -53,9 +47,6 @@ module QueryStash
       # @rbs name: String
       # @rbs ttl_seconds: ttl
       # @rbs ttl_jitter_seconds: ttl
-      # @rbs on_cache_hit: callback?
-      # @rbs on_cache_miss: callback?
-      # @rbs on_cache_skip: callback?
       # @rbs enabled: (^() -> boolish)?
       # @rbs store: _CacheStore?
       # @rbs return: Array[Rule]
@@ -64,9 +55,6 @@ module QueryStash
         name:,
         ttl_seconds:,
         ttl_jitter_seconds:,
-        on_cache_hit: nil,
-        on_cache_miss: nil,
-        on_cache_skip: nil,
         enabled: nil,
         store: nil
       )
@@ -79,9 +67,6 @@ module QueryStash
           name: name,
           ttl_seconds: ttl_seconds,
           ttl_jitter_seconds: ttl_jitter_seconds,
-          on_cache_hit: on_cache_hit,
-          on_cache_miss: on_cache_miss,
-          on_cache_skip: on_cache_skip,
           enabled: enabled,
           store: store
         )
@@ -313,8 +298,8 @@ module QueryStash
     # whether to stash.
     #
     # A stash gets `read` and `write` from here, which keep the reading and writing of the cache store, the
-    # instrumentation, the callbacks of the rule and the handling of errors in one place. It has to define
-    # `rule_for` and `cache_key_for`, and can override the others.
+    # instrumentation and the handling of errors in one place. It has to define `rule_for` and
+    # `cache_key_for`, and can override the others.
 
     # The rule of the registry the query is to be stashed under, or nil when it isn't to be: the stash is off
     # (see `stashing?`), the query is not one that can be, or no rule matches it.
@@ -331,7 +316,7 @@ module QueryStash
 
     # The result stored for the query, or nil when there is none (or the cache store failed: that is
     # reported, or raised when `raise_on_cache_error` is set). Emits `cache_read` and, on a hit,
-    # `cache_hit`, and calls the rule's `on_cache_hit`.
+    # `cache_hit`.
     #: (Registry::Rule rule, *untyped args) -> untyped
     def read(rule, *args)
       cache_key = cache_key_for(*args)
@@ -351,7 +336,6 @@ module QueryStash
         # Results are never nil, so nil means a miss.
         unless cached_result.nil?
           @instrumenter.instrument("cache_hit.query_stash", adapter: @adapter, rule: rule.name)
-          rule.on_cache_hit&.call(rule, cached_result)
           return cached_result
         end
       end
@@ -360,8 +344,8 @@ module QueryStash
     end
 
     # Stores `result` for the query when the rule keeps results for any time (else it is skipped), and
-    # returns it. Emits `cache_miss` or, when skipped, `cache_skip`, and calls the rule's `on_cache_miss`
-    # or `on_cache_skip`. A failure of the cache store is reported (or raised), and does not lose the result.
+    # returns it. Emits `cache_miss` or, when skipped, `cache_skip`.
+    # A failure of the cache store is reported (or raised), and does not lose the result.
     #: (Registry::Rule rule, untyped result, *untyped args) -> untyped
     def write(rule, result, *args)
       ttl_seconds = rule.ttl_seconds_for(result)
@@ -370,11 +354,9 @@ module QueryStash
       rescue_cache_error do
         if ttl_seconds.positive?
           @instrumenter.instrument("cache_miss.query_stash", adapter: @adapter, rule: rule.name)
-          rule.on_cache_miss&.call(rule, result)
           cache_for(rule).write(cache_key_for(*args), result, expires_in: ttl_seconds + rand(ttl_jitter_seconds))
         else
           @instrumenter.instrument("cache_skip.query_stash", adapter: @adapter, rule: rule.name)
-          rule.on_cache_skip&.call(rule, result)
         end
       end
 
