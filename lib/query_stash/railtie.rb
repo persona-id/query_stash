@@ -15,7 +15,7 @@ module QueryStash
     ADAPTER_OPTIONS = %i[enabled isolated_state instrumenter error_reporter cache_store].freeze
 
     # The adapters' sections of `config.query_stash`, which are not options of their own.
-    ADAPTER_SECTIONS = %i[active_record mongo].freeze
+    ADAPTER_SECTIONS = %i[active_record mongo sequel].freeze
 
     class << self
       # The `adapter` (QueryStash::ActiveRecord or QueryStash::Mongo) for the app's `config`, with
@@ -58,6 +58,7 @@ module QueryStash
       # Only for the adapters that are loaded.
       config.query_stash.active_record = ActiveSupport::OrderedOptions.new if defined?(::ActiveRecord::Railtie)
       config.query_stash.mongo = ActiveSupport::OrderedOptions.new if defined?(::Rails::Mongoid::Railtie)
+      config.query_stash.sequel = ActiveSupport::OrderedOptions.new if defined?(::SequelRails::Railtie)
     end
 
     # Builds each adapter's instance from the app's config, which the environment files have already
@@ -84,6 +85,22 @@ module QueryStash
         QueryStash::Mongo.set(app, QueryStash::Railtie.build(QueryStash::Mongo, app.config))
         app.config.middleware.use QueryStash::Mongo::Middleware, app
       end
+
+      if defined?(::SequelRails::Railtie)
+        require_relative "sequel"
+
+        QueryStash::Sequel.set(app, QueryStash::Railtie.build(QueryStash::Sequel, app.config))
+        app.config.middleware.use QueryStash::Sequel::Middleware, app
+
+        # Every database that loads the extension is stashed by the app's stash.
+        QueryStash::Sequel.stash_builder = ->(_db) { QueryStash::Sequel[app] }
+      end
+    end
+
+    # The database the app uses is the one sequel-rails connected, which is `Sequel::Model.db`: by now it has
+    # connected, unless it was told not to. The other databases of the app are up to it (see the README).
+    config.after_initialize do
+      ::Sequel::Model.db.extension(:query_stash) if defined?(::SequelRails::Railtie) && ::Sequel::DATABASES.any?
     end
 
     initializer "query_stash.active_job" do |app|
@@ -93,6 +110,8 @@ module QueryStash
         end
 
         around_perform { |_job, block| QueryStash::Mongo[app].enable!(&block) } if defined?(::Rails::Mongoid::Railtie)
+
+        around_perform { |_job, block| QueryStash::Sequel[app].enable!(&block) } if defined?(::SequelRails::Railtie)
       end
     end
 

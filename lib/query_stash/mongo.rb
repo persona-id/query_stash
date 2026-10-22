@@ -34,7 +34,7 @@ module QueryStash
     # Wildcard sentinel for selector patterns
     ANY = Object.new.freeze #: Object
 
-    class MongoFilterRegistry < Base::Registry
+    class MongoFilterRegistry < Registry
       private
 
       # Pattern semantics:
@@ -93,7 +93,7 @@ module QueryStash
 
     # The rule the view is stashed under, or nil when it isn't to be stashed: the stash is off, or no rule
     # matches its selector.
-    #: (_View view) -> Base::Registry::Rule?
+    #: (_View view) -> Registry::Rule?
     def rule_for(view)
       return unless stashing?
 

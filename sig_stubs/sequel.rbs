@@ -1,0 +1,22 @@
+# The parts of Sequel the code names. It ships no types.
+module Sequel
+  class Database
+    def self.register_extension: (Symbol name) { (Database db) -> untyped } -> untyped
+
+    def extend_datasets: (Module mod) -> untyped
+
+    def database_type: () -> Symbol
+
+    def opts: () -> Hash[Symbol, untyped]
+  end
+
+  class Dataset
+    module PreparedStatementMethods
+    end
+  end
+end
+
+module SequelRails
+  class Railtie
+  end
+end

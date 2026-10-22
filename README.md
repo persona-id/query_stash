@@ -2,9 +2,9 @@
 
 Cross-request query result caching for the handful of hot, slow-changing lookups you choose.
 
-Currently shipping with adapters for [activerecord](https://rubygems.org/gems/activerecord) and [mongo](https://rubygems.org/gems/mongo).
+Currently shipping with adapters for [activerecord](https://rubygems.org/gems/activerecord), [sequel](https://rubygems.org/gems/sequel) and [mongo](https://rubygems.org/gems/mongo).
 
-QueryStash can keep the result of an allowlisted query across requests and jobs, for a TTL you compute from the result itself, in a store of your choosing. It hooks the database adapter (and the Mongo driver), so call sites don't need to change: `Organization.find(id)` is served from the stash when a rule matches it.
+QueryStash can keep the result of an allowlisted query across requests and jobs, for a TTL you compute from the result itself, in a store of your choosing. It hooks the database adapter (and the Sequel and Mongo drivers), so call sites don't need to change: `Organization.find(id)` is served from the stash when a rule matches it.
 
 ```ruby
 QueryStash::ActiveRecord[Rails.application].configure do |rules|
@@ -92,6 +92,35 @@ Besides the regex, the following parameters are accepted as keyword arguments:
 - `ttl_seconds` and `ttl_jitter_seconds` are integers or callables that receive the uncached result. A TTL of 0 or less means "don't cache this result" (a *skip*). Entries are written with `expires_in: ttl_seconds + rand(ttl_jitter_seconds)`, so entries for a hot rule don't all expire at once.
 - `enabled` turns a single rule off without removing it.
 
+### Sequel rules
+
+The Sequel adapter works like the ActiveRecord one: rules are regexps matched against the SQL a dataset is about to run, only `SELECT`s are stashed, and queries with bind variables or prepared statements (and PostgreSQL cursors) are passed through. A stashed query is loaded in full, so a rule is not for a streamed result set.
+
+```ruby
+QueryStash::Sequel[Rails.application].configure do |rules|
+  rules.add_rule(
+    /\ASELECT \* FROM `plans` WHERE \(`id` = \d+\)/,
+    name: "plan_by_id",
+    ttl_seconds: ->(rows) { rows.any? ? 60 : 0 }, # don't cache "not found"
+    ttl_jitter_seconds: 10
+  )
+end
+```
+
+`ttl_seconds` and `ttl_jitter_seconds` callables receive the rows: an array of hashes, before any model is built from them. The cache key is the SQL, the database (adapter, host and name) and the server the dataset uses. Use whatever quoting your Sequel database does when you write the regexp: `db["SELECT 1"].sql` shows it.
+
+A database is stashed once it loads the extension, which gives it a stash of its own:
+
+```ruby
+DB = Sequel.connect(url, query_stash: { cache_store: MyCache.new, enabled: true })
+DB.extension(:query_stash)
+QueryStash::Sequel[DB].configure { |rules| rules.add_rule(...) }
+```
+
+The `query_stash` option takes `cache_store:` (required) and the other options of `QueryStash::Base#initialize`.
+
+With [sequel-rails](https://rubygems.org/gems/sequel-rails) in the app, the railtie does the rest: the middleware, the jobs, and the database sequel-rails connected (`Sequel::Model.db`), all with the app's stash (`QueryStash::Sequel[Rails.application]`, configured by `config.query_stash`). Another database of the app only needs `OTHER_DB.extension(:query_stash)`, and gets the app's stash too.
+
 ### Mongo rules
 
 Mongo rules match a selector built from the view: `collection_name`, `filter`, `limit`, `skip`, `sort`, `projection` and `pipeline`.
@@ -150,7 +179,7 @@ config.query_stash.cache_store = :file_store, "tmp/query-stash"
 
 ### Options per adapter
 
-`config.query_stash.active_record` and `config.query_stash.mongo` (each one
+`config.query_stash.active_record`, `config.query_stash.sequel` and `config.query_stash.mongo` (each one
 exists when that framework is loaded) can set `enabled`, `isolated_state`,
 `instrumenter`, `error_reporter` and `cache_store` for their adapter alone.
 Whatever one of them doesn't set, it takes from `config.query_stash`, even if
@@ -276,7 +305,7 @@ MyDriverStash.set(app, MyDriverStash.new(cache_store: MyCache.new))
 MyDriverStash[app].enable! { ... }
 ```
 
-Override `build_registry` to return a `QueryStash::Base::Registry` subclass if your rules need their own matching,
+Override `build_registry` to return a `QueryStash::Registry` subclass (`QueryStash::Registry::Sql` for rules that are regexps on SQL) if your rules need their own matching,
 like the SQL and Mongo ones. The events carry the adapter's name, taken from the class name (`MyDriverStash` is
 `:my_driver_stash`).
 

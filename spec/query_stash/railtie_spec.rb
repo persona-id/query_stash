@@ -16,6 +16,7 @@ RSpec.describe QueryStash::Railtie do
     it "have a section under config.query_stash for each adapter that is loaded, empty until set" do
       expect(config_options.active_record).to be_empty
       expect(config_options.mongo).to be_empty
+      expect(config_options.sequel).to be_empty
     end
 
     describe ".build" do
@@ -140,8 +141,10 @@ RSpec.describe QueryStash::Railtie do
   describe "middleware" do
     let(:request) { Rack::MockRequest.new(Rails.application) }
 
-    it "adds the ActiveRecord and Mongo middlewares to the app" do
-      expect(Rails.application.middleware).to include(QueryStash::ActiveRecord::Middleware, QueryStash::Mongo::Middleware)
+    it "adds the ActiveRecord, Mongo and Sequel middlewares to the app" do
+      expect(Rails.application.middleware).to include(
+        QueryStash::ActiveRecord::Middleware, QueryStash::Mongo::Middleware, QueryStash::Sequel::Middleware
+      )
     end
 
     context "with ActiveRecord", database: :active_record do
@@ -170,6 +173,24 @@ RSpec.describe QueryStash::Railtie do
       end
     end
 
+    context "with Sequel", database: :active_record do
+      before do
+        SequelDatabase.db[:sequel_posts].delete
+        reset_app_stash(QueryStash::Sequel).registry.add_rule(/\ASELECT .*sequel_posts/, name: "sequel_posts",
+                                                                                         ttl_seconds: 60,
+                                                                                         ttl_jitter_seconds: 0)
+      end
+
+      it "serves the next request's lookup from the stash" do
+        id = SequelDatabase.db[:sequel_posts].insert(title: "Before")
+
+        expect(request.get("/sequel_posts/#{id}").body).to eq("Before")
+        SequelDatabase.db[:sequel_posts].where(id: id).update(title: "After")
+
+        expect(request.get("/sequel_posts/#{id}").body).to eq("Before")
+      end
+    end
+
     context "with Mongo", database: :mongo do
       before do
         reset_app_stash(QueryStash::Mongo).registry.add_rule(
@@ -190,16 +211,18 @@ RSpec.describe QueryStash::Railtie do
 
   describe "ActiveJob" do
     it "enables the stash for both adapters while a job runs and restores it afterwards" do
-      expect(StashStateJob.perform_now).to eq([true, true])
+      expect(StashStateJob.perform_now).to eq([true, true, true])
       expect(ActiveSupport::IsolatedExecutionState[QueryStash::ActiveRecord[Rails.application]]).to be_nil
       expect(ActiveSupport::IsolatedExecutionState[QueryStash::Mongo[Rails.application]]).to be_nil
+      expect(ActiveSupport::IsolatedExecutionState[QueryStash::Sequel[Rails.application]]).to be_nil
     end
 
     it "enables the stash for both adapters even while the app's stashes are not enabled" do
       allow(QueryStash::ActiveRecord[Rails.application]).to receive(:enabled).and_return(false)
       allow(QueryStash::Mongo[Rails.application]).to receive(:enabled).and_return(false)
+      allow(QueryStash::Sequel[Rails.application]).to receive(:enabled).and_return(false)
 
-      expect(StashStateJob.perform_now).to eq([true, true])
+      expect(StashStateJob.perform_now).to eq([true, true, true])
     end
 
     context "with ActiveRecord", database: :active_record do

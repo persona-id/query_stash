@@ -12,6 +12,7 @@ RSpec.describe "QueryStash without ActiveSupport" do
       require "query_stash/base"
       require "query_stash/mongo"
       require "query_stash/active_record"
+      require "query_stash/sequel"
 
       class FakeStore
         def initialize = @entries = {}
@@ -44,7 +45,17 @@ RSpec.describe "QueryStash without ActiveSupport" do
       sql.registry.add_rule(/SELECT/, name: "selects", ttl_seconds: 60, ttl_jitter_seconds: 0)
       binds = sql.enable! { sql.wrap("SELECT 1", ["bind"]) { :db } }
 
-      puts [outside, inside, binds].inspect
+      db = Sequel.sqlite(query_stash: { cache_store: FakeStore.new, enabled: false, raise_on_cache_error: true })
+      db.extension(:query_stash)
+      stash = QueryStash::Sequel[db]
+      stash.registry.add_rule(/SELECT/, name: "selects", ttl_seconds: 60, ttl_jitter_seconds: 0)
+      db.create_table(:t) { String :a }
+      db[:t].insert(a: "x")
+      sequel_runs = []
+      db.loggers << Class.new { define_method(:info) { |message| sequel_runs << message if message.include?("SELECT") } }.new
+      rows = stash.enable! { Array.new(2) { db[:t].all } }
+
+      puts [outside, inside, binds, rows, sequel_runs.size].inspect
       puts $LOADED_FEATURES.grep(/active_support/).first(3).inspect
     RUBY
   end
@@ -54,7 +65,7 @@ RSpec.describe "QueryStash without ActiveSupport" do
 
     expect(status).to be_success, output
     results, loaded_active_support = output.lines.last(2).map(&:chomp)
-    expect(results).to eq([[%w[a b], %w[a b], 2], [%w[a b], %w[a b], 1], :db].inspect)
+    expect(results).to eq([[%w[a b], %w[a b], 2], [%w[a b], %w[a b], 1], :db, [[{ a: "x" }], [{ a: "x" }]], 1].inspect)
     expect(loaded_active_support).to eq("[]")
   end
 end
