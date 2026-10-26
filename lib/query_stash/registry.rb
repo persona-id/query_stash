@@ -31,41 +31,79 @@ module QueryStash
       end
     end
 
+    # What `set_rule_defaults` can set: the options of `add_rule` other than the selector and the name.
+    RULE_DEFAULTS = %i[ttl_seconds ttl_jitter_seconds enabled store].freeze #: Array[Symbol]
+
+    # What an option of `add_rule` is when it is not given (`nil` is a value too: `enabled: nil`).
+    UNSET = Object.new.freeze #: Object
+
     # @rbs @rules: Array[Rule]
+    # @rbs @rule_defaults: Hash[Symbol, untyped]
 
     attr_reader :rules #: Array[Rule]
 
     #: () -> void
     def initialize
       @rules = []
+      @rule_defaults = {}
     end
 
+    # Sets what the rules added from now on take for the options they don't give, so that a block of rules
+    # needs to say only what is different about each one:
+    #
+    #   registry.set_rule_defaults(ttl_seconds: 60, ttl_jitter_seconds: 10)
+    #   registry.add_rule(/SELECT .*users/, name: "users")                   # 60 seconds, 10 of jitter
+    #   registry.add_rule(/SELECT .*orders/, name: "orders", ttl_seconds: 5) # 5 seconds, 10 of jitter
+    #
+    # The rules that exist are left as they are. A later call changes only the options it names, and `nil`
+    # takes a default away.
+    #
+    # @rbs **defaults: untyped
+    # @rbs return: Hash[Symbol, untyped]
+    def set_rule_defaults(**defaults)
+      unknown = defaults.keys - RULE_DEFAULTS
+      unless unknown.empty?
+        raise Error, "Unknown rule defaults: #{unknown.join(", ")} (use #{RULE_DEFAULTS.join(", ")})"
+      end
+
+      @rule_defaults = @rule_defaults.merge(defaults).compact
+    end
+
+    # `ttl_seconds` and `ttl_jitter_seconds` are required, unless `set_rule_defaults` gave them.
+    #
     # @rbs selector: untyped
     # @rbs name: String
-    # @rbs ttl_seconds: ttl
-    # @rbs ttl_jitter_seconds: ttl
-    # @rbs enabled: (^() -> boolish)?
-    # @rbs store: _CacheStore?
+    # @rbs ttl_seconds: ttl | Object
+    # @rbs ttl_jitter_seconds: ttl | Object
+    # @rbs enabled: (^() -> boolish)? | Object
+    # @rbs store: _CacheStore? | Object
     # @rbs return: Array[Rule]
     def add_rule(
       selector, # required
       name:,
-      ttl_seconds:,
-      ttl_jitter_seconds:,
-      enabled: nil,
-      store: nil
+      ttl_seconds: UNSET,
+      ttl_jitter_seconds: UNSET,
+      enabled: UNSET,
+      store: UNSET
     )
       raise Error, "Rule name is required" if name.nil? || name.empty?
 
       raise Error, "Rule name #{name.inspect} is already taken" if @rules.any? { |r| r.name == name }
 
+      given = { ttl_seconds: ttl_seconds, ttl_jitter_seconds: ttl_jitter_seconds, enabled: enabled, store: store }
+      given = given.reject { |_, value| UNSET.equal?(value) }
+      options = { enabled: nil, store: nil }.merge(@rule_defaults, given) #: Hash[Symbol, untyped]
+      %i[ttl_seconds ttl_jitter_seconds].each do |required|
+        raise Error, "Rule #{name.inspect} needs #{required}, or a default for it" if options[required].nil?
+      end
+
       @rules << Rule.new(
         selector: selector,
         name: name,
-        ttl_seconds: ttl_seconds,
-        ttl_jitter_seconds: ttl_jitter_seconds,
-        enabled: enabled,
-        store: store
+        ttl_seconds: options[:ttl_seconds],
+        ttl_jitter_seconds: options[:ttl_jitter_seconds],
+        enabled: options[:enabled],
+        store: options[:store]
       )
     end
 

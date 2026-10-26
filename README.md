@@ -92,6 +92,19 @@ Besides the regex, the following parameters are accepted as keyword arguments:
 - `ttl_seconds` and `ttl_jitter_seconds` are integers or callables that receive the uncached result. A TTL of 0 or less means "don't cache this result" (a *skip*). Entries are written with `expires_in: ttl_seconds + rand(ttl_jitter_seconds)`, so entries for a hot rule don't all expire at once.
 - `enabled` turns a single rule off without removing it.
 
+To avoid repeating options, set defaults in the `configure` block: the rules added after that take them for what they don't set.
+
+```ruby
+QueryStash::ActiveRecord[Rails.application].configure do |registry|
+  registry.set_rule_defaults(ttl_seconds: 60, ttl_jitter_seconds: 10)
+
+  registry.add_rule(/\ASELECT .*"plans"/, name: "plans")                    # 60 seconds, 10 of jitter
+  registry.add_rule(/\ASELECT .*"users"/, name: "users", ttl_seconds: 5)     # 5 seconds, 10 of jitter
+end
+```
+
+`ttl_seconds`, `ttl_jitter_seconds`, `enabled` and `store` can have defaults. Rules that exist are not changed by a later call, which only changes the options it names (`nil` takes a default away). The same goes for the Sequel and Mongo rules.
+
 ### Sequel rules
 
 The Sequel adapter works like the ActiveRecord one: rules are regexps matched against the SQL a dataset is about to run, only `SELECT`s are stashed, and queries with bind variables or prepared statements (and PostgreSQL cursors) are passed through. A stashed query is loaded in full, so a rule is not for a streamed result set.

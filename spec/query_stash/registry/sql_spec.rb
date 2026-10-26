@@ -25,6 +25,48 @@ RSpec.describe QueryStash::Registry::Sql do
     end
   end
 
+  describe "#set_rule_defaults" do
+    it "gives the rules added after it what they don't set" do
+      store = Object.new
+      enabled = -> { true }
+      registry.set_rule_defaults(ttl_seconds: 60, ttl_jitter_seconds: 10, enabled: enabled, store: store)
+
+      registry.add_rule(/SELECT/, name: "plain")
+      registry.add_rule(/INSERT/, name: "own", ttl_seconds: 5, ttl_jitter_seconds: 0, enabled: nil, store: nil)
+
+      expect(registry.rules.first).to have_attributes(ttl_seconds: 60, ttl_jitter_seconds: 10, enabled: enabled,
+                                                      store: store)
+      expect(registry.rules.last).to have_attributes(ttl_seconds: 5, ttl_jitter_seconds: 0, enabled: nil, store: nil)
+    end
+
+    it "leaves the rules that exist as they are" do
+      registry.add_rule(/SELECT/, name: "before", ttl_seconds: 1, ttl_jitter_seconds: 0)
+      registry.set_rule_defaults(ttl_jitter_seconds: 10)
+
+      expect(registry.rules.first.ttl_jitter_seconds).to eq(0)
+    end
+
+    it "changes only what a later call names, and takes a default away with nil" do
+      registry.set_rule_defaults(ttl_seconds: 60, ttl_jitter_seconds: 10)
+      registry.set_rule_defaults(ttl_seconds: 30)
+      registry.add_rule(/SELECT/, name: "one")
+      registry.set_rule_defaults(ttl_jitter_seconds: nil)
+
+      expect(registry.rules.first).to have_attributes(ttl_seconds: 30, ttl_jitter_seconds: 10)
+      expect { registry.add_rule(/INSERT/, name: "two") }.to raise_error(QueryStash::Error, /needs ttl_jitter_seconds/)
+    end
+
+    it "does not take other options" do
+      expect { registry.set_rule_defaults(name: "x") }.to raise_error(QueryStash::Error, /Unknown rule defaults: name/)
+    end
+  end
+
+  describe "#add_rule without its ttls" do
+    it "asks for them when there are no defaults" do
+      expect { registry.add_rule(/SELECT/, name: "x") }.to raise_error(QueryStash::Error, /needs ttl_seconds/)
+    end
+  end
+
   describe "#delete_rule" do
     it "deletes rules by name and ignores unknown names" do
       registry.add_rule(/SELECT/, name: "test_rule", ttl_seconds: 60, ttl_jitter_seconds: 0)

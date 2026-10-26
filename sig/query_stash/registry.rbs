@@ -36,21 +36,45 @@ module QueryStash
       def ttl_jitter_seconds_for: (untyped result) -> Integer
     end
 
+    # What `set_rule_defaults` can set: the options of `add_rule` other than the selector and the name.
+    RULE_DEFAULTS: Array[Symbol]
+
+    # What an option of `add_rule` is when it is not given (`nil` is a value too: `enabled: nil`).
+    UNSET: Object
+
     @rules: Array[Rule]
+
+    @rule_defaults: Hash[Symbol, untyped]
 
     attr_reader rules: Array[Rule]
 
     # : () -> void
     def initialize: () -> void
 
+    # Sets what the rules added from now on take for the options they don't give, so that a block of rules
+    # needs to say only what is different about each one:
+    #
+    #   registry.set_rule_defaults(ttl_seconds: 60, ttl_jitter_seconds: 10)
+    #   registry.add_rule(/SELECT .*users/, name: "users")                   # 60 seconds, 10 of jitter
+    #   registry.add_rule(/SELECT .*orders/, name: "orders", ttl_seconds: 5) # 5 seconds, 10 of jitter
+    #
+    # The rules that exist are left as they are. A later call changes only the options it names, and `nil`
+    # takes a default away.
+    #
+    # @rbs **defaults: untyped
+    # @rbs return: Hash[Symbol, untyped]
+    def set_rule_defaults: (**untyped defaults) -> Hash[Symbol, untyped]
+
+    # `ttl_seconds` and `ttl_jitter_seconds` are required, unless `set_rule_defaults` gave them.
+    #
     # @rbs selector: untyped
     # @rbs name: String
-    # @rbs ttl_seconds: ttl
-    # @rbs ttl_jitter_seconds: ttl
-    # @rbs enabled: (^() -> boolish)?
-    # @rbs store: _CacheStore?
+    # @rbs ttl_seconds: ttl | Object
+    # @rbs ttl_jitter_seconds: ttl | Object
+    # @rbs enabled: (^() -> boolish)? | Object
+    # @rbs store: _CacheStore? | Object
     # @rbs return: Array[Rule]
-    def add_rule: (untyped selector, name: String, ttl_seconds: ttl, ttl_jitter_seconds: ttl, ?enabled: (^() -> boolish)?, ?store: _CacheStore?) -> Array[Rule]
+    def add_rule: (untyped selector, name: String, ?ttl_seconds: ttl | Object, ?ttl_jitter_seconds: ttl | Object, ?enabled: (^() -> boolish)? | Object, ?store: _CacheStore? | Object) -> Array[Rule]
 
     # : (String name) -> Array[Rule]
     def delete_rule: (String name) -> Array[Rule]
