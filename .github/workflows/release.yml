@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    name: Push to RubyGems
+    # The environment's required reviewers approve each release before the job gets an OIDC token.
+    environment:
+      name: rubygems
+      url: https://rubygems.org/gems/query_stash
+    permissions:
+      contents: read
+      # Trusted publishing: RubyGems trades the job's OIDC token for a short-lived API key.
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '4.0'
+      - name: Check that the tag is the gem's version
+        run: |
+          version=$(ruby -r ./lib/query_stash/version -e 'print QueryStash::VERSION')
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME is not v$version, the version in lib/query_stash/version.rb"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Build the gem
+        run: gem build query_stash.gemspec
+      - name: Get RubyGems credentials
+        uses: rubygems/configure-rubygems-credentials@v1
+      - name: Push the gem
+        run: gem push "query_stash-$VERSION.gem"
