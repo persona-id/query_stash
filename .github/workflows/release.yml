@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - lib/query_stash/version.rb
+  # To retry a release that failed; a version that is already tagged is skipped.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -66,7 +68,7 @@ jobs:
       - name: Build the gem
         run: gem build query_stash.gemspec
       - name: Get RubyGems credentials
-        uses: rubygems/configure-rubygems-credentials@v1
+        uses: rubygems/configure-rubygems-credentials@dc5a8d8553e6ee01fc26761a49e99e733d17954a # v2.1.0
       - name: Push the gem
         run: gem push "query_stash-$VERSION.gem"
       - name: Tag the release
