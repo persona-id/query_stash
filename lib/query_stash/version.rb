@@ -2,5 +2,5 @@
 
 module QueryStash
   # Merging a change to this file into main releases the gem (.github/workflows/release.yml).
-  VERSION = "0.1.0" #: String
+  VERSION = "0.1.1" #: String
 end
