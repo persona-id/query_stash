@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+- Locking reads (`FOR UPDATE`, `FOR SHARE`, `LOCK IN SHARE MODE`, Sequel datasets with a lock) are no longer stashed, so they still take their row locks.
+
 ## [0.1.0]
 
 First release, extracted from Persona's `ProcessQueryCache`.

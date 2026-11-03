@@ -28,6 +28,7 @@ What it does not do:
 - **No invalidation.** Entries leave on TTL (plus jitter) or eviction. A write does not clear the stash, so a read after a write can return the old row until the TTL runs out. Wrap read-after-write code in `disable!`, or don't stash those queries.
 - **Inlined SQL only.** Queries with bind parameters are passed through untouched. Use an adapter or configuration that inlines values (Trilogy and mysql2 do by default; set `prepared_statements: false` for SQLite or PostgreSQL).
 - **`SELECT` only**, matched with `/\ASELECT/i`. SQL that starts with a comment, whitespace or a `WITH` clause is never stashed.
+- **Locking reads always run.** A `SELECT` with `FOR UPDATE`, `FOR SHARE` (and their variants) or `LOCK IN SHARE MODE`, or a Sequel dataset with a lock, is never stashed, so it still takes its locks.
 - **Not transaction-aware.** A matching read inside a transaction can be served from the stash instead of seeing the transaction's own writes.
 - **`load_async` queries bypass it.**
 - The ActiveRecord cache key is the SQL plus `ActiveRecord::Base.current_shard`. It does not include the role or the database name.
