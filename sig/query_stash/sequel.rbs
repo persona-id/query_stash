@@ -28,6 +28,10 @@ module QueryStash
 
     CACHEABLE_SQL_REGEX: Regexp
 
+    # A `SELECT` that takes row locks, written in raw SQL (datasets have `opts[:lock]`): served from the stash,
+    # it would skip the lock.
+    LOCKING_SQL_REGEX: Regexp
+
     # Enables the stash for the duration of each request. `application` is the Rails application the
     # middleware stack belongs to; `app` is the next middleware.
     class Middleware
@@ -74,7 +78,8 @@ module QueryStash
     def wrap: (_Dataset dataset, String sql, (^(Hash[Symbol, untyped]) -> untyped)? consumer) { (?) -> untyped } -> untyped
 
     # The rule the query is stashed under, or nil when it isn't to be stashed: the stash is off, it has
-    # binds or runs through a cursor (not supported), it is not a SELECT, or no rule matches it.
+    # binds or runs through a cursor (not supported), it is not a SELECT, it takes row locks, or no rule
+    # matches it.
     # : (_Dataset dataset, String sql) -> Registry::Rule?
     def rule_for: (_Dataset dataset, String sql) -> Registry::Rule?
 

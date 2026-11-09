@@ -37,6 +37,11 @@ module QueryStash
     CACHEABLE_SQL_REGEX = /\ASELECT/i #: Regexp
     private_constant :CACHEABLE_SQL_REGEX
 
+    # A `SELECT` that takes row locks, written in raw SQL (datasets have `opts[:lock]`): served from the stash,
+    # it would skip the lock.
+    LOCKING_SQL_REGEX = /\bFOR\s+(?:NO\s+)?(?:KEY\s+)?(?:UPDATE|SHARE)\b|\bLOCK\s+IN\s+SHARE\s+MODE\b/i #: Regexp
+    private_constant :LOCKING_SQL_REGEX
+
     # Enables the stash for the duration of each request. `application` is the Rails application the
     # middleware stack belongs to; `app` is the next middleware.
     class Middleware
@@ -111,12 +116,14 @@ module QueryStash
     end
 
     # The rule the query is stashed under, or nil when it isn't to be stashed: the stash is off, it has
-    # binds or runs through a cursor (not supported), it is not a SELECT, or no rule matches it.
+    # binds or runs through a cursor (not supported), it is not a SELECT, it takes row locks, or no rule
+    # matches it.
     #: (_Dataset dataset, String sql) -> Registry::Rule?
     def rule_for(dataset, sql)
       return unless stashing?
       return if bound?(dataset) || dataset.opts[:cursor]
       return unless CACHEABLE_SQL_REGEX.match?(sql)
+      return if dataset.opts[:lock] || LOCKING_SQL_REGEX.match?(sql)
 
       rule = registry.match_rule(sql)
       rule if rule && (rule.enabled.nil? || rule.enabled.call)

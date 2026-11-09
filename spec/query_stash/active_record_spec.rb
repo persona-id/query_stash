@@ -308,6 +308,25 @@ RSpec.describe QueryStash::ActiveRecord do
       end
     end
 
+    context "when the query takes row locks" do
+      before { registry.add_rule(/SELECT.*users/, name: "test", ttl_seconds: 60, ttl_jitter_seconds: 0) }
+
+      [
+        "SELECT * FROM users WHERE id = 1 LIMIT 1 FOR UPDATE",
+        "SELECT * FROM users WHERE id = 1 FOR UPDATE SKIP LOCKED",
+        "SELECT * FROM users WHERE id = 1 FOR NO KEY UPDATE",
+        "SELECT * FROM users WHERE id = 1 FOR SHARE",
+        "SELECT * FROM users WHERE id = 1 FOR KEY SHARE",
+        "SELECT * FROM users WHERE id = 1 LOCK IN SHARE MODE"
+      ].each do |locking_sql|
+        it "runs #{locking_sql.inspect} every time, without caching" do
+          expect(stash.wrap(locking_sql, []) { "first" }).to eq("first")
+          expect(stash.wrap(locking_sql, []) { "second" }).to eq("second")
+          expect(cache.read(cache_key_for(locking_sql))).to be_nil
+        end
+      end
+    end
+
     context "when no rule matches" do
       it "yields without caching" do
         expect(subject).to eq("yielded_result")

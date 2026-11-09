@@ -35,6 +35,11 @@ module QueryStash
     CACHEABLE_SQL_REGEX = /\ASELECT/i #: Regexp
     private_constant :CACHEABLE_SQL_REGEX
 
+    # A `SELECT` that takes row locks (`FOR UPDATE`, `FOR SHARE`, `LOCK IN SHARE MODE`, ...): served from the
+    # stash, it would skip the lock. Rails' own query cache skips locked queries too.
+    LOCKING_SQL_REGEX = /\bFOR\s+(?:NO\s+)?(?:KEY\s+)?(?:UPDATE|SHARE)\b|\bLOCK\s+IN\s+SHARE\s+MODE\b/i #: Regexp
+    private_constant :LOCKING_SQL_REGEX
+
     # Enables the stash for the duration of each request.
     class Middleware
       # @rbs @app: _RackApp
@@ -158,12 +163,13 @@ module QueryStash
     end
 
     # The rule the query is stashed under, or nil when it isn't to be stashed: the stash is off, it has
-    # binds (not supported), it is not a SELECT, or no rule matches it.
+    # binds (not supported), it is not a SELECT, it takes row locks, or no rule matches it.
     #: (String sql, ?has_binds: bool?) -> Registry::Rule?
     def rule_for(sql, has_binds: false)
       return unless stashing?
       return if has_binds
       return unless CACHEABLE_SQL_REGEX.match?(sql)
+      return if LOCKING_SQL_REGEX.match?(sql)
 
       rule = registry.match_rule(sql)
       rule if rule && (rule.enabled.nil? || rule.enabled.call)

@@ -175,6 +175,19 @@ RSpec.describe QueryStash::Sequel, database: :active_record do
       expect(selects.size).to eq(2)
     end
 
+    it "does not stash queries that take row locks" do
+      stash.enable! { 2.times { expect(posts.where(id: id).for_update.all.first[:title]).to eq("Hello") } }
+
+      expect(selects.size).to eq(2)
+    end
+
+    it "does not stash raw SQL that takes row locks" do
+      locking = db["SELECT title FROM sequel_posts FOR UPDATE"]
+
+      expect(stash.rule_for(locking, locking.sql)).to be_nil
+      expect(stash.rule_for(db["SELECT title FROM sequel_posts"], "SELECT title FROM sequel_posts")).not_to be_nil
+    end
+
     it "does not stash prepared statements" do
       prepared = posts.where(id: :$id).prepare(:first, :sequel_post_by_id)
 
