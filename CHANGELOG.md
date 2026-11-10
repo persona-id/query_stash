@@ -1,6 +1,13 @@
 ## [Unreleased]
 
+## [0.1.2]
+
 - Locking reads (`FOR UPDATE`, `FOR SHARE`, `LOCK IN SHARE MODE`, Sequel datasets with a lock) are no longer stashed, so they still take their row locks.
+- Remove the Gemfile.lock file from the tracked files (always test against latest).
+
+## [0.1.1]
+
+- bump trilogy version used for tests.
 
 ## [0.1.0]
 
